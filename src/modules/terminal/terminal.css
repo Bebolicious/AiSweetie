@@ -1,0 +1,163 @@
+.term {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+/* ── session tabs ──────────────────────────────────────────────────────*/
+.tabs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+  background: none;
+  color: var(--ink-dimmer);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.tab[data-on="true"] {
+  border-color: var(--accent);
+  color: var(--ink-bright);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.tab__n {
+  color: var(--ink-faint);
+}
+
+.tab[data-on="true"] .tab__n {
+  color: var(--accent);
+}
+
+.tab--new {
+  border-style: dashed;
+}
+
+.tab__key {
+  color: var(--ink-faint);
+  font-size: var(--fs-micro);
+}
+
+.tabs__keys {
+  margin-left: auto;
+  color: var(--ink-faint);
+  font-size: var(--fs-micro);
+}
+
+/* ── the tiled grid ────────────────────────────────────────────────────
+   Panes are absolutely positioned from rects computed off the tree, so a
+   split repositions siblings instead of rebuilding them. */
+.grid {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.slot {
+  position: absolute;
+  transition:
+    left 200ms var(--swap-flat-ease),
+    top 200ms var(--swap-flat-ease),
+    width 200ms var(--swap-flat-ease),
+    height 200ms var(--swap-flat-ease);
+}
+
+.slot > .pane {
+  position: absolute;
+  inset: calc(var(--gap) / 2);
+}
+
+.pane__id {
+  color: var(--ink-faint);
+  font-size: var(--fs-micro);
+}
+
+.pane__badge {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: var(--fs-micro);
+}
+
+/* A pane is a panel like any other, so it inherits the shell's treatment. */
+.pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  backdrop-filter: blur(var(--blur-panel));
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  overflow: hidden;
+}
+
+.pane[data-focused="true"] {
+  border: 2px solid var(--accent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+.pane__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-small);
+}
+
+.pane__dot {
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.pane__title {
+  color: var(--ink-bright);
+}
+
+.pane__status {
+  margin-left: auto;
+  color: var(--ink-dimmer);
+  font-size: var(--fs-micro);
+}
+
+/* xterm owns everything below the head. Output is bottom-anchored, which is
+   what xterm does natively — no flex trickery needed. */
+.pane__term {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 14px;
+  overflow: hidden;
+}
+
+.pane__term .xterm {
+  height: 100%;
+}
+
+.pane__term .xterm-viewport {
+  background: transparent !important;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-bright) transparent;
+}

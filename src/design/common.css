@@ -1,0 +1,59 @@
+/* Vocabulary shared across modules. Lives here rather than in whichever
+   module happened to need it first, so no module depends on another's CSS
+   being loaded. */
+
+.empty-state {
+  align-self: start;
+  max-width: 62ch;
+  border-color: var(--accent);
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: var(--fs-body);
+  line-height: 1.7;
+}
+
+.empty-state code {
+  color: var(--accent);
+}
+
+.muted {
+  margin: 0;
+  color: var(--ink-dimmer);
+  font-size: var(--fs-small);
+}
+
+.muted.pad {
+  padding: 14px 20px;
+}
+
+.bright {
+  color: var(--ink-bright);
+}
+
+.add {
+  color: var(--green);
+}
+
+.del {
+  color: var(--red);
+}
+
+.rule {
+  height: 1px;
+  background: var(--line);
+  flex: none;
+}
+
+/* The keymap strip every module footer uses. */
+.keys {
+  margin-top: auto;
+  padding-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  color: var(--ink-dimmer);
+  font-size: var(--fs-micro);
+}

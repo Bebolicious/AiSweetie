@@ -1,0 +1,317 @@
+/* Home screen. Only the widgets that are real live here — clock, projects,
+   edge map, prompt. The rest of the mock's widgets arrive with their own
+   slice; empty placeholder boxes would violate the one rule the design
+   actually has. */
+
+.home-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  /* Panels take a considered width rather than stretching to fill. The grid
+     gains columns as widgets land; it must not look broken with two. */
+  grid-template-columns: repeat(auto-fit, minmax(300px, 420px));
+  grid-auto-rows: min-content;
+  justify-content: start;
+  align-content: start;
+  gap: var(--gap);
+  padding: 0 12px;
+}
+
+/* ── clock ─────────────────────────────────────────────────────────────*/
+.clock__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.clock__time {
+  font-size: var(--fs-clock);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--ink-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.clock__meta {
+  color: var(--ink-dimmer);
+  font-size: var(--fs-small);
+  padding-bottom: 8px;
+  line-height: 1.5;
+}
+
+/* ── edge map ──────────────────────────────────────────────────────────*/
+.edge-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 9px;
+  margin-left: -9px;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  font: inherit;
+  font-size: var(--fs-small);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.edge-row:hover,
+.edge-row:focus-visible {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-left-color: var(--accent);
+}
+
+.edge-row__arrow {
+  color: var(--accent);
+  width: 16px;
+  flex: none;
+}
+
+.edge-row__name {
+  color: var(--ink-bright);
+}
+
+.edge-row__status {
+  color: var(--ink-dimmer);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edge-row__index {
+  margin-left: auto;
+  color: var(--ink-dimmer);
+  flex: none;
+}
+
+/* ── projects ──────────────────────────────────────────────────────────*/
+.projects__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+}
+
+.proj-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-bright);
+  border-radius: var(--r-inner);
+  background: var(--bg-screen);
+  transition: border-color 140ms ease;
+}
+
+.proj-pick:focus-within {
+  border-color: var(--accent);
+}
+
+/* Collapsed until `o` or the chip: a visible-but-idle input would be a
+   second prompt competing with the pill. */
+.proj-pick[data-open="false"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  border: 0;
+  padding: 0;
+}
+
+.proj-pick__caret {
+  color: var(--accent);
+  flex: none;
+}
+
+.proj-pick__input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--ink-bright);
+  font: inherit;
+  font-size: var(--fs-small);
+  user-select: text;
+}
+
+.proj-pick__input::placeholder {
+  color: var(--ink-dimmer);
+}
+
+.proj-pick__keys {
+  flex: none;
+  color: var(--ink-faint);
+  font-size: var(--fs-micro);
+}
+
+.proj-sug {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: -6px;
+}
+
+.proj-sug__item {
+  border: 1px solid var(--line);
+  border-radius: var(--r-small);
+  padding: 3px 8px;
+  background: none;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.proj-sug__item[data-on="true"],
+.proj-sug__item:hover {
+  border-color: var(--accent);
+  color: var(--ink-bright);
+}
+
+.proj-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.proj-row {
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  margin-left: -9px;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  font: inherit;
+  font-size: var(--fs-small);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.proj-row:hover,
+.proj-row:focus-visible,
+.proj-row[data-on="true"] {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-left-color: var(--accent);
+}
+
+.proj-row__mark {
+  color: var(--accent);
+}
+
+.proj-row[data-on="false"] .proj-row__mark {
+  color: var(--ink-faint);
+}
+
+.proj-row__name {
+  color: var(--ink-bright);
+  white-space: nowrap;
+}
+
+.proj-row__path,
+.proj-row__status {
+  color: var(--ink-dimmer);
+  font-size: var(--fs-micro);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proj-row__status {
+  text-align: right;
+}
+
+/* ── settings chip ─────────────────────────────────────────────────────*/
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--line-bright);
+  border-radius: var(--r-chip);
+  padding: 6px 12px;
+  background: none;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: var(--fs-micro);
+  letter-spacing: 0;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.chip:hover,
+.chip:focus-visible {
+  border-color: var(--teal);
+  color: var(--ink-bright);
+}
+
+.chip__key {
+  color: var(--ink-faint);
+}
+
+/* ── AI prompt pill ────────────────────────────────────────────────────*/
+.pill {
+  flex: none;
+  align-self: center;
+  width: min(880px, 72vw);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 26px;
+  margin-bottom: 8px;
+  background: var(--panel-raised);
+  backdrop-filter: blur(var(--blur-pill));
+  border: 1px solid var(--line-bright);
+  border-radius: var(--r-pill);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+  transition: border-color 140ms ease;
+}
+
+.pill:focus-within {
+  border-color: var(--teal);
+}
+
+.pill__caret {
+  color: var(--teal);
+  font-size: var(--fs-lg);
+  flex: none;
+}
+
+.pill__input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--ink-bright);
+  font: inherit;
+  font-size: var(--fs-lg);
+  user-select: text;
+}
+
+.pill__input::placeholder {
+  color: var(--ink-dimmer);
+}
+
+.pill__keys {
+  flex: none;
+  color: var(--ink-faint);
+  font-size: var(--fs-micro);
+}

@@ -1,0 +1,243 @@
+/* Shell chrome: the world, the track, the cells, the rails, panels.
+   Module interiors bring their own styles; none of this is theirs to touch. */
+
+.world {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg-void);
+}
+
+/* ── the track ─────────────────────────────────────────────────────────
+   300% of the viewport in both axes, so one cell is exactly a third of it.
+   This is the only thing that moves. */
+.track {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 300%;
+  height: 300%;
+  transition: transform var(--swap-flat-ms) var(--swap-flat-ease);
+}
+
+:root[data-bounce="on"] .track {
+  transition: transform var(--swap-ms) var(--swap-ease);
+}
+
+/* Promote the layer only while in flight — a permanently promoted 3×3 world
+   is a lot of texture memory to hold at 4K for no benefit at rest. */
+:root[data-accel="on"] .track[data-moving="true"] {
+  will-change: transform;
+}
+
+.cell {
+  position: absolute;
+  width: 33.3333%;
+  height: 33.3333%;
+  padding: var(--pad-screen);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  background: var(--bg-screen);
+}
+
+/* A soft radial tint anchored toward home, in that edge's own hue. Sized in
+   viewport units so it scales with the display instead of pinning to 1100px. */
+.cell[data-view="home"] {
+  background:
+    radial-gradient(62vw 62vh at 22% 12%, #16283a, var(--bg-screen) 60%),
+    var(--bg-screen);
+}
+.cell[data-view="top"] {
+  background:
+    radial-gradient(58vw 58vh at 78% 88%, #16283a, var(--bg-screen) 60%),
+    var(--bg-screen);
+}
+.cell[data-view="right"] {
+  background:
+    radial-gradient(58vw 58vh at 12% 82%, #1c2136, var(--bg-screen) 60%),
+    var(--bg-screen);
+}
+.cell[data-view="bottom"] {
+  background:
+    radial-gradient(58vw 58vh at 84% 14%, #16283a, var(--bg-screen) 60%),
+    var(--bg-screen);
+}
+.cell[data-view="left"] {
+  background:
+    radial-gradient(58vw 58vh at 18% 20%, #2a2318, var(--bg-screen) 62%),
+    var(--bg-screen);
+}
+
+/* ── edge rails ────────────────────────────────────────────────────────
+   Thin glowing bars at the screen edges. The hit area is deliberately much
+   larger than the 5px bar. */
+.rail {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  padding: 0;
+  opacity: 0.75;
+  transition:
+    opacity 160ms ease,
+    filter 160ms ease;
+}
+
+.rail:hover,
+.rail:focus-visible {
+  opacity: 1;
+  filter: drop-shadow(0 0 6px var(--rail-hue));
+}
+
+.rail__bar {
+  border-radius: var(--r-pill);
+  background: linear-gradient(
+    var(--rail-angle),
+    transparent,
+    var(--rail-hue),
+    transparent
+  );
+}
+
+.rail[data-side="top"],
+.rail[data-side="bottom"] {
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(300px, 24vw);
+  height: 22px;
+  --rail-angle: 90deg;
+}
+.rail[data-side="top"] {
+  top: 6px;
+}
+.rail[data-side="bottom"] {
+  bottom: 6px;
+}
+.rail[data-side="top"] .rail__bar,
+.rail[data-side="bottom"] .rail__bar {
+  width: 100%;
+  height: 5px;
+}
+
+.rail[data-side="left"],
+.rail[data-side="right"] {
+  top: 50%;
+  transform: translateY(-50%);
+  height: min(300px, 24vh);
+  width: 22px;
+  --rail-angle: 180deg;
+}
+.rail[data-side="left"] {
+  left: 6px;
+}
+.rail[data-side="right"] {
+  right: 6px;
+}
+.rail[data-side="left"] .rail__bar,
+.rail[data-side="right"] .rail__bar {
+  height: 100%;
+  width: 5px;
+}
+
+/* ── screen header ─────────────────────────────────────────────────────
+   Shell chrome. The module supplies only the context string. */
+.screen-head {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 12px;
+  font-size: var(--fs-label);
+  color: var(--ink-dimmer);
+  letter-spacing: var(--track-label);
+  flex: none;
+}
+
+.screen-head__mark {
+  color: var(--accent);
+}
+
+.screen-head__context {
+  color: var(--ink-dim);
+  letter-spacing: 0;
+  font-size: var(--fs-small);
+}
+
+.screen-head__right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.nav-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  color: var(--ink-dimmer);
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+.nav-link:hover {
+  color: var(--ink-bright);
+}
+.nav-link[data-current="true"] {
+  color: var(--teal);
+}
+
+/* ── panels ────────────────────────────────────────────────────────────*/
+.panel {
+  background: var(--panel);
+  backdrop-filter: blur(var(--blur-panel));
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  padding: var(--pad-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+/* The focused panel earns 2px and a glow. Only ever one on screen. */
+.panel[data-focused="true"] {
+  border: 2px solid var(--accent);
+  padding: calc(22px - 1px) calc(24px - 1px);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+.panel__label {
+  color: var(--ink-dimmer);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-label);
+  flex: none;
+}
+
+/* ── module body ───────────────────────────────────────────────────────
+   The container handed to mount(). Identical on every edge — this is the
+   promise that makes modules interchangeable. */
+.module-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding: 0 12px;
+}
+
+/* ── the bottom-left hint ──────────────────────────────────────────────*/
+.hint {
+  position: absolute;
+  left: var(--pad-screen);
+  bottom: 14px;
+  font-size: var(--fs-label);
+  color: var(--ink-ghost);
+  letter-spacing: 0.1em;
+  pointer-events: none;
+}

@@ -1,0 +1,26 @@
+# dependencies & build output
+node_modules
+dist
+
+# rust / tauri
+src-tauri/target
+src-tauri/gen/schemas
+
+# local tool config — machine-specific, not shared
+.claude/settings.local.json
+
+# editor
+.vscode
+.idea
+*.swp
+
+# os cruft
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# secrets
+.env
+.env.local
+# design reference — kept locally, not shared
+ui-mock

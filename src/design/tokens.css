@@ -1,0 +1,145 @@
+/* Design tokens extracted from ui-mock/AI Suite Prototype.dc.html.
+   The mock encodes these as ~700 lines of duplicated inline styles; this is
+   the same system named once. Nothing here is invented — every value below
+   appears in the prototype.
+
+   Deliberately single-theme: the compositor aesthetic commits to dark. */
+
+:root {
+  /* ── ground ─────────────────────────────────────────────────────────── */
+  --bg-void: #05070a; /* behind everything, and the settings scrim */
+  --bg-screen: #0a0d12; /* each 100vw cell's base */
+  --panel: rgba(17, 23, 32, 0.72);
+  --panel-solid: rgba(15, 20, 28, 0.94); /* modals, where blur can't carry it */
+  --panel-raised: rgba(17, 23, 32, 0.86); /* the AI prompt pill */
+
+  /* ── strokes ────────────────────────────────────────────────────────── */
+  --line: #1f2937; /* default panel border + hairline dividers */
+  --line-bright: #2b3a4d; /* chips, buttons, anything interactive at rest */
+
+  /* ── text, brightest to faintest ────────────────────────────────────── */
+  --ink-bright: #e6edf6; /* the value you actually came to read */
+  --ink: #c9d6e4; /* body */
+  --ink-dim: #8896a8; /* secondary */
+  --ink-dimmer: #5d6b7d; /* labels, metadata */
+  --ink-faint: #3d4a5c; /* inactive glyphs, key hints */
+  --ink-ghost: #2b3a4d; /* the bottom-left hint line */
+
+  /* ── accents ────────────────────────────────────────────────────────── */
+  --teal: #4fd6be;
+  --blue: #7aa2f7;
+  --violet: #bb9af7;
+  --amber: #e0af68;
+  --green: #9ece6a;
+  --red: #f7768e;
+
+  /* Edge hues follow the DIRECTION, not the module — swapping modules
+     between edges must not move the color. (prototype line 660) */
+  --edge-top: var(--teal);
+  --edge-right: var(--violet);
+  --edge-bottom: var(--blue);
+  --edge-left: var(--amber);
+
+  /* ── semantic (separate from accent) ────────────────────────────────── */
+  --ok: var(--green);
+  --warn: var(--amber);
+  --bad: var(--red);
+  --add-bg: rgba(158, 206, 106, 0.1);
+  --del-bg: rgba(247, 118, 142, 0.1);
+
+  /* ── geometry ───────────────────────────────────────────────────────── */
+  --gap: 14px; /* the visible gutter between floating panels */
+  --pad-screen: 22px;
+  --pad-panel: 22px 24px;
+  --r-panel: 10px;
+  --r-inner: 8px;
+  --r-chip: 7px;
+  --r-small: 6px;
+  --r-pill: 99px;
+
+  /* ── type ───────────────────────────────────────────────────────────── */
+  --font: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --fs-label: 11px;
+  --fs-micro: 12px;
+  --fs-small: 13px;
+  --fs-body: 14px;
+  --fs-base: 15px;
+  --fs-lg: 16px;
+  --fs-stat: 22px;
+  --fs-display: 30px;
+  --fs-clock: 64px;
+  --track-label: 0.14em; /* uppercase section labels */
+
+  /* ── motion — one curve, every edge pulls from it ───────────────────── */
+  --swap-ms: 440ms;
+  --swap-ease: cubic-bezier(0.28, 1.22, 0.36, 1); /* overshoot ≈1.06 */
+  --swap-flat-ms: 260ms;
+  --swap-flat-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── performance escape hatches (Settings → Performance) ────────────── */
+  --blur-panel: 14px;
+  --blur-modal: 24px;
+  --blur-pill: 18px;
+}
+
+/* Panel blur off — the Linux/WebKitGTK fallback. Compensate with opacity,
+   since without blur the translucency alone reads as muddy. */
+:root[data-blur="off"] {
+  --blur-panel: 0px;
+  --blur-modal: 0px;
+  --blur-pill: 0px;
+  --panel: rgba(17, 23, 32, 0.94);
+  --panel-raised: rgba(17, 23, 32, 0.97);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg-void);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: var(--fs-base);
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Keyboard-first means focus must always be visible. */
+:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --swap-ms: 1ms;
+    --swap-flat-ms: 1ms;
+  }
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

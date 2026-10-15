@@ -1,0 +1,252 @@
+.git {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(300px, 400px);
+  gap: var(--gap);
+}
+
+.git-changes,
+.git-graph {
+  overflow-y: auto;
+  gap: 8px;
+}
+
+/* ── changes list ──────────────────────────────────────────────────────*/
+.sect {
+  color: var(--ink-dimmer);
+  font-size: var(--fs-label);
+  letter-spacing: 0.12em;
+  margin: 10px 0 2px;
+}
+
+.chg {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 7px 9px;
+  margin-left: -9px;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  font: inherit;
+  font-size: var(--fs-body);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.chg:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.chg[data-on="true"] {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-left-color: var(--accent);
+}
+
+.chg[data-on="true"] .chg__path {
+  color: var(--ink-bright);
+}
+
+.chg__st {
+  flex: none;
+  width: 1ch;
+}
+
+/* The directory truncates; the filename never does. `direction: rtl` would
+   be shorter but it reorders trailing separators — "notes/" becomes "/notes". */
+.chg__path {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chg__dir {
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chg__base {
+  flex: none;
+  white-space: nowrap;
+}
+
+.chg__n {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex: none;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.branch {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: var(--fs-small);
+  padding: 2px 0;
+}
+
+.branch__dot {
+  color: var(--ink-faint);
+}
+
+.branch__dot[data-on="true"] {
+  color: var(--accent);
+}
+
+.branch__age {
+  margin-left: auto;
+  color: var(--ink-dimmer);
+}
+
+/* ── diff pane ─────────────────────────────────────────────────────────*/
+.git-diff {
+  padding: 0;
+  overflow: hidden;
+}
+
+.git-diff__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 22px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-small);
+}
+
+.git-diff__n {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.git-diff__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-size: var(--fs-body);
+  line-height: 1.62;
+}
+
+.hunk {
+  border-left: 2px solid transparent;
+}
+
+.hunk[data-on="true"] {
+  border-left-color: var(--accent);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.hunk__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 20px;
+  background: rgba(122, 162, 247, 0.06);
+  color: var(--ink-dimmer);
+  cursor: pointer;
+  position: sticky;
+  top: 0;
+}
+
+.hunk[data-on="true"] .hunk__head {
+  background: rgba(122, 162, 247, 0.12);
+  color: var(--blue);
+}
+
+.hunk__tag {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+}
+
+.hunk[data-on="true"] .hunk__tag {
+  color: var(--accent);
+}
+
+.dl {
+  display: flex;
+  gap: 0;
+  white-space: pre;
+}
+
+.dl__no {
+  flex: none;
+  width: 52px;
+  padding-left: 20px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.dl__t {
+  flex: 1;
+  padding-right: 20px;
+  overflow-x: auto;
+  color: var(--ink-dim);
+}
+
+.dl[data-k="add"] {
+  background: var(--add-bg);
+}
+
+.dl[data-k="add"] .dl__t {
+  color: var(--green);
+}
+
+.dl[data-k="del"] {
+  background: var(--del-bg);
+}
+
+.dl[data-k="del"] .dl__t {
+  color: var(--red);
+}
+
+.dl[data-k="meta"] .dl__t {
+  color: var(--ink-faint);
+}
+
+/* ── graph ─────────────────────────────────────────────────────────────*/
+.commit {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--fs-small);
+  padding: 2px 0;
+}
+
+.commit__rail {
+  color: var(--line-bright);
+}
+
+.commit__dot {
+  color: var(--accent);
+  font-size: 9px;
+}
+
+.commit__hash {
+  color: var(--blue);
+  flex: none;
+}
+
+.commit__subject {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit__age {
+  margin-left: auto;
+  color: var(--ink-dimmer);
+  flex: none;
+  font-size: var(--fs-micro);
+}

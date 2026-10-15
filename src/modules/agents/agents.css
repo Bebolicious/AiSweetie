@@ -1,0 +1,246 @@
+.agents {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: var(--gap);
+}
+
+.ag-queue {
+  overflow-y: auto;
+  gap: 10px;
+}
+
+.ag-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-inner);
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease;
+}
+
+.ag-card:hover {
+  border-color: var(--line-bright);
+}
+
+.ag-card[data-on="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.ag-card__top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-small);
+}
+
+.ag-card__dot {
+  font-size: 8px;
+  color: var(--ink-faint);
+}
+
+.ag-card[data-state="running"] .ag-card__dot {
+  color: var(--accent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.ag-card[data-state="done"] .ag-card__dot {
+  color: var(--green);
+}
+
+.ag-card[data-state="failed"] .ag-card__dot {
+  color: var(--red);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.ag-card__id {
+  color: var(--ink-bright);
+}
+
+.ag-card__meta {
+  margin-left: auto;
+  color: var(--ink-dimmer);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.ag-card__prompt {
+  color: var(--ink-dimmer);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── transcript ────────────────────────────────────────────────────────*/
+.ag-transcript {
+  padding: 0;
+  overflow: hidden;
+}
+
+.ag-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 15px 22px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-small);
+}
+
+.ag-head .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ag-head__right {
+  margin-left: auto;
+  color: var(--ink-dimmer);
+  font-size: var(--fs-micro);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Output is bottom-anchored, like a terminal: the newest event is the one
+   you care about, so the column fills from the bottom up. */
+.ag-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 18px 22px;
+}
+
+.ag-blank {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  text-align: center;
+}
+
+.ag-blank .muted {
+  max-width: 46ch;
+  line-height: 1.7;
+}
+
+.ti {
+  font-size: var(--fs-small);
+  line-height: 1.65;
+}
+
+.ti--system {
+  color: var(--ink-faint);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+}
+
+.ti--text {
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.ti--tool {
+  display: flex;
+  gap: 10px;
+  color: var(--ink-dimmer);
+}
+
+.ti__name {
+  color: var(--accent);
+  flex: none;
+}
+
+.ti__detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ti--result {
+  color: var(--ink-faint);
+  font-size: var(--fs-micro);
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ti--result[data-ok="false"] {
+  color: var(--red);
+  border-left-color: var(--red);
+}
+
+.ti--final {
+  color: var(--ink-bright);
+  white-space: pre-wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--line-bright);
+  border-radius: var(--r-inner);
+}
+
+.ti--error {
+  color: var(--red);
+  white-space: pre-wrap;
+}
+
+.ag-prompt {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--line);
+}
+
+.ag-prompt__caret {
+  color: var(--accent);
+}
+
+.ag-prompt__input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--ink-bright);
+  font: inherit;
+  font-size: var(--fs-body);
+  user-select: text;
+}
+
+.ag-prompt__input::placeholder {
+  color: var(--ink-dimmer);
+}
+
+.ag-prompt__keys {
+  color: var(--ink-faint);
+  font-size: var(--fs-micro);
+  flex: none;
+}

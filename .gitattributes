@@ -1,0 +1,11 @@
+# This repo is worked on from both Windows and Linux. Store and check out LF
+# everywhere so switching machines never produces a whole-file diff.
+* text=auto eol=lf
+
+# Binary — never touch these.
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
