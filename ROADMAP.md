@@ -126,8 +126,9 @@ status on the active one), edge map and prompt pill already ship.
 Deliberately late: the widgets want real data from the layers above. Shipping them earlier would mean
 shipping the placeholder boxes that `src/home/home.css:1` refuses.
 
-**Done when:** home matches `ui-mock/home.png` with every widget backed by real data, and the system
-stats cost nothing measurable on the swap.
+**Done when:** home matches `ui-mock/home.png` — gitignored, so this is a check against a local
+reference rather than anything in the repository — with every widget backed by real data, and the
+system stats cost nothing measurable on the swap.
 
 ### 0.9 — Settings for real
 
@@ -149,12 +150,18 @@ them through whatever their machine is missing — with no terminal involved.
 
 ### 0.11 — Release hygiene
 
-README with screenshots, CHANGELOG, and a single source of truth for the version. `package.json`,
+CHANGELOG, and a single source of truth for the version. `package.json`,
 `Cargo.toml`, `tauri.conf.json` and `Settings.tsx:75` all say `0.1.0` today, but the last one is a
 hardcoded string — it should read the real version rather than agreeing by coincidence. Module
 versions stay independent of the shell's (git 0.2.0, terminal 0.3.0, explorer 0.2.0, agents 0.2.0);
 that is by design, since a module is a separately versioned unit. CI running `npm test`, `cargo test`,
 and both platform builds. Tighten `csp` from `null` as far as the current module loader allows.
+
+`README.md` ships already, with an ASCII diagram of the 3×3 world standing in for images. Replace
+that with **real captures** here, not before: `docs/home.png`, one per module, and `docs/swap.gif`
+of the 440ms slide. Deliberately last, because screenshots taken now would advertise a home screen
+that 0.8 has not built yet — the mock's PNGs stay out of the repo for the same reason. Captures of
+the real app, not `ui-mock/`.
 
 **Done when:** tagged `v1.0.0` with installers attached to the GitHub release.
 

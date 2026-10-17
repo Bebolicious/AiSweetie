@@ -49,7 +49,12 @@ export function Home(props: { onOpenSettings: () => void }) {
   });
 
   return (
-    <section class="cell" data-view="home" style={cellPosition(GRID.home)}>
+    <section
+      class="cell"
+      data-view="home"
+      data-live={view() === "home" ? "true" : "false"}
+      style={cellPosition(GRID.home)}
+    >
       <header class="screen-head">
         <span class="screen-head__mark" style={{ "--accent": "var(--teal)" }}>
           ● HOME

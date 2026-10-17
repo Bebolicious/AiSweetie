@@ -9,6 +9,7 @@ mod fsx;
 mod git;
 mod probe;
 mod pty;
+mod task;
 
 #[cfg(test)]
 mod git_tests;

@@ -9,7 +9,7 @@ import {
   createEffect,
   on,
 } from "solid-js";
-import { render } from "solid-js/web";
+import { mountView } from "../../shell/mountView";
 import type { Binding, ModuleContext, Project, SuiteModule } from "@suite/module";
 import { git, hasHost, type FileChange } from "./api";
 import { hunkPatch, parseDiff, type Hunk } from "./diff";
@@ -17,6 +17,37 @@ import { splitPath } from "../../shell/paths";
 import "./git.css";
 
 type Selection = { path: string; staged: boolean } | null;
+
+/** The three things that choose a diff, plus the manual-refresh counter. */
+type DiffTarget = {
+  repo: string;
+  path: string;
+  staged: boolean;
+  tick: number;
+} | null;
+
+/**
+ * Total diff lines below which every hunk renders expanded.
+ *
+ * Under this, nothing is bounded or hidden and the whole file is on screen at
+ * once — the ordinary case. Over it, unfocused hunks collapse to their headers
+ * and only the cursor's hunk shows its lines.
+ */
+const EXPAND_BUDGET = 800;
+
+/**
+ * Lines shown for one hunk before it asks to be opened further.
+ *
+ * Not a truncation. `space` stages the whole hunk — `hunkPatch` builds the
+ * patch from the parsed diff, not from what is rendered — so a hunk that
+ * silently showed you 600 of its 5000 lines meant staging 4400 lines you were
+ * never given the chance to read. That is worse than a slow render.
+ *
+ * So anything beyond this is **reachable, not discarded**: the remainder is
+ * one click away, and until it is opened the stage hint states the real line
+ * count rather than implying the hunk is as short as it looks.
+ */
+const LINE_CAP = 600;
 
 function statusHue(letter: string) {
   if (letter === "A" || letter === "M") return "var(--green)";
@@ -43,20 +74,37 @@ function GitView(props: {
     },
   );
 
-  const [tick, setTick] = createSignal(0);
-  const reload = () => setTick((n) => n + 1);
+  /**
+   * What drives a refetch, and whether it should bypass the host's caches.
+   *
+   * Two different things call `reload`. Staging a hunk cannot move a ref, so
+   * the cached branch list and log are still correct and asking for them again
+   * is two wasted process spawns. Pressing `r` is the user saying the opposite
+   * — so it carries `fresh`, and refresh means refresh.
+   */
+  const [reloadToken, setReloadToken] = createSignal({ n: 0, fresh: false });
+  const reload = (fresh = false) =>
+    setReloadToken((t) => ({ n: t.n + 1, fresh }));
+  const tick = () => reloadToken().n;
 
   const key = () => {
     const r = repo();
-    return r ? ([r, tick()] as const) : null;
+    const t = reloadToken();
+    return r ? ([r, t.n, t.fresh] as const) : null;
   };
 
+  // Never cached: a worktree edit touches nothing a fingerprint can see, and
+  // this is the one answer that must not be stale. See architecture §9.
   const [status] = createResource(key, ([r]) => git.status(r));
-  const [branches] = createResource(key, ([r]) => git.branches(r));
-  const [log] = createResource(key, ([r]) => git.log(r, 12));
+  const [branches] = createResource(key, ([r, , fresh]) =>
+    git.branches(r, fresh),
+  );
+  const [log] = createResource(key, ([r, , fresh]) => git.log(r, 12, fresh));
 
   const [selected, setSelected] = createSignal<Selection>(null);
   const [hunkIndex, setHunkIndex] = createSignal(0);
+  /** Hunk indices the user has asked to see in full, past `LINE_CAP`. */
+  const [opened, setOpened] = createSignal<ReadonlySet<number>>(new Set());
 
   // A selection from the previous project means nothing in the next one.
   createEffect(
@@ -72,31 +120,66 @@ function GitView(props: {
 
   // Pick the first changed file automatically so the diff pane is never blank
   // while there is something to look at.
-  const autoSelect = createMemo(() => {
-    const s = status();
-    if (!s) return null;
-    const current = selected();
-    if (current) {
-      const still =
-        (current.staged ? s.staged : s.unstaged).some(
-          (f) => f.path === current.path,
-        );
-      if (still) return current;
-    }
-    const first = s.unstaged[0] ?? s.staged[0];
-    return first
-      ? { path: first.path, staged: !s.unstaged.includes(first) }
-      : null;
-  });
+  //
+  // `equals` because this is read all over the render and returns a fresh
+  // object every run, so without it every status poll invalidated every row in
+  // the changed-files list to write back identical attributes.
+  const autoSelect = createMemo<Selection>(
+    () => {
+      const s = status();
+      if (!s) return null;
+      const current = selected();
+      if (current) {
+        const still =
+          (current.staged ? s.staged : s.unstaged).some(
+            (f) => f.path === current.path,
+          );
+        if (still) return current;
+      }
+      const first = s.unstaged[0] ?? s.staged[0];
+      return first
+        ? { path: first.path, staged: !s.unstaged.includes(first) }
+        : null;
+    },
+    null,
+    { equals: (a, b) => a?.path === b?.path && a?.staged === b?.staged },
+  );
 
-  const diffKey = () => {
-    const r = repo();
-    const sel = autoSelect();
-    return r && sel ? ([r, sel.path, sel.staged, tick()] as const) : null;
-  };
+  /**
+   * Which diff to fetch, with an identity that only changes when the answer
+   * does.
+   *
+   * This was a plain function returning a fresh array, fed straight to
+   * `createResource`. A new array is a new value, so the resource refetched
+   * whenever *anything* upstream moved rather than when the choice of diff
+   * changed — measured at two `git_diff` calls per event where one was needed,
+   * and `git_diff` is a ~12 ms process spawn.
+   *
+   * The `root` check is the other half, and it is why `RepoStatus.root` exists.
+   * `status()` keeps serving the previous repository's data while it refetches,
+   * so without it a project switch spends a spawn asking the new repo for a
+   * diff of the old repo's file.
+   */
+  const diffTarget = createMemo<DiffTarget>(
+    () => {
+      const r = repo();
+      const s = status();
+      const sel = autoSelect();
+      if (!r || !sel || s?.root !== r) return null;
+      return { repo: r, path: sel.path, staged: sel.staged, tick: tick() };
+    },
+    null,
+    {
+      equals: (a, b) =>
+        a?.repo === b?.repo &&
+        a?.path === b?.path &&
+        a?.staged === b?.staged &&
+        a?.tick === b?.tick,
+    },
+  );
 
-  const [diffText] = createResource(diffKey, ([r, path, staged]) =>
-    git.diff(r, path, staged),
+  const [diffText] = createResource(diffTarget, (t) =>
+    git.diff(t.repo, t.path, t.staged),
   );
 
   const file = createMemo(() => {
@@ -106,6 +189,30 @@ function GitView(props: {
 
   const hunks = () => file()?.hunks ?? [];
   const currentHunk = () => hunks()[hunkIndex()];
+
+  /**
+   * Whether every hunk shows its lines, or only the one under the cursor.
+   *
+   * Rendering every line of every hunk is unbounded, and the case that makes
+   * it bite is ordinary: regenerate a lockfile and the diff is tens of
+   * thousands of rows, each one three elements. Below the budget nothing
+   * changes and you see the whole file at once, which is the common case.
+   * Above it, hunks collapse to their headers and only the cursor's hunk is
+   * open — which also makes `j`/`k` cheap, because moving the cursor then
+   * re-renders two hunks instead of re-styling ten thousand rows.
+   *
+   * Keyed on the file rather than the cursor, so scrolling the cursor through
+   * a large diff never flips the mode underneath you.
+   */
+  const expandAll = createMemo(
+    () => hunks().reduce((n, h) => n + h.lines.length, 0) <= EXPAND_BUDGET,
+  );
+
+  // Hunk indices mean nothing once the diff changes underneath them.
+  createEffect(on(file, () => setOpened(new Set<number>()), { defer: true }));
+
+  const openFully = (i: number) =>
+    setOpened((prev) => new Set(prev).add(i));
 
   createMemo(() => {
     const s = status();
@@ -169,7 +276,7 @@ function GitView(props: {
       label: "Refresh repository",
       run: () => {
         void refetchRepo();
-        reload();
+        reload(true);
       },
     },
   ]);
@@ -298,35 +405,80 @@ function GitView(props: {
                 fallback={<p class="muted pad">no textual diff for this file</p>}
               >
                 <For each={hunks()}>
-                  {(h: Hunk, i) => (
-                    <div class="hunk" data-on={i() === hunkIndex() ? "true" : "false"}>
-                      <div
-                        class="hunk__head"
-                        onClick={() => setHunkIndex(i())}
-                      >
-                        <span>{h.header}</span>
-                        <span class="hunk__tag">
-                          {autoSelect()?.staged ? "STAGED" : "UNSTAGED"}
-                          <Show when={i() === hunkIndex()}> ␣</Show>
-                        </span>
+                  {(h: Hunk, i) => {
+                    const focused = () => i() === hunkIndex();
+                    const open = () => expandAll() || focused();
+                    const full = () => opened().has(i());
+                    const shown = () =>
+                      full() || h.lines.length <= LINE_CAP
+                        ? h.lines
+                        : h.lines.slice(0, LINE_CAP);
+                    const hidden = () => h.lines.length - shown().length;
+
+                    return (
+                      <div class="hunk" data-on={focused() ? "true" : "false"}>
+                        <div
+                          class="hunk__head"
+                          onClick={() => setHunkIndex(i())}
+                        >
+                          <span>{h.header}</span>
+                          <span class="hunk__tag">
+                            {autoSelect()?.staged ? "STAGED" : "UNSTAGED"}
+                            {/* Name the real size when part of the hunk is
+                                not on screen, so `space` is never a
+                                surprise — it stages all of it either way. */}
+                            <Show when={focused()}>
+                              <Show
+                                when={hidden() > 0}
+                                fallback={<> ␣</>}
+                              >
+                                {" "}
+                                ␣ stages all {h.lines.length} lines
+                              </Show>
+                            </Show>
+                          </span>
+                        </div>
+
+                        <Show
+                          when={open()}
+                          fallback={
+                            <div class="hunk__fold">
+                              <span class="add">+{h.added}</span>{" "}
+                              <span class="del">−{h.removed}</span> ·{" "}
+                              {h.lines.length} lines — j/k or click to open
+                            </div>
+                          }
+                        >
+                          <For each={shown()}>
+                            {(l) => (
+                              <div class="dl" data-k={l.kind}>
+                                <span class="dl__no">
+                                  {l.newNo ?? l.oldNo ?? ""}
+                                </span>
+                                <span class="dl__t">
+                                  {l.kind === "add"
+                                    ? "+"
+                                    : l.kind === "del"
+                                      ? "−"
+                                      : " "}
+                                  {l.text}
+                                </span>
+                              </div>
+                            )}
+                          </For>
+                          <Show when={hidden() > 0}>
+                            <button
+                              type="button"
+                              class="hunk__more"
+                              onClick={() => openFully(i())}
+                            >
+                              show the remaining {hidden()} lines of this hunk
+                            </button>
+                          </Show>
+                        </Show>
                       </div>
-                      <For each={h.lines}>
-                        {(l) => (
-                          <div class="dl" data-k={l.kind}>
-                            <span class="dl__no">{l.newNo ?? l.oldNo ?? ""}</span>
-                            <span class="dl__t">
-                              {l.kind === "add"
-                                ? "+"
-                                : l.kind === "del"
-                                  ? "−"
-                                  : " "}
-                              {l.text}
-                            </span>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  )}
+                    );
+                  }}
                 </For>
               </Show>
             </div>
@@ -363,7 +515,7 @@ export function gitModule(): SuiteModule {
     version: "0.2.0",
 
     mount(container: HTMLElement, ctx: ModuleContext) {
-      dispose = render(
+      dispose = mountView(
         () => (
           <GitView
             register={(b) => (bindings = b)}
