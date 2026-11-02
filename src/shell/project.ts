@@ -45,8 +45,53 @@ export function openProject(path: string): Project {
   return project;
 }
 
-/** Seed from wherever the host was launched. No-op in the browser build. */
+/**
+ * Adopt persisted projects (ROADMAP 0.1 + 0.4).
+ *
+ * The list is recency-ordered, so the first entry becomes active. Returns
+ * whether anything was restored, which is how `bootProject` knows not to
+ * override a remembered project with the directory the binary happened to
+ * start in.
+ */
+export function hydrateProjects(
+  stored: { name: string; path: string; self_dev?: boolean }[],
+): boolean {
+  const projects = stored
+    .filter((p) => p.path.trim() !== "")
+    .map((p) => ({
+      ...projectFromPath(p.path),
+      // The stored name is kept only if it was customised; otherwise derive it,
+      // so a renamed directory does not keep showing its old name forever.
+      name: p.name.trim() || projectFromPath(p.path).name,
+      selfDev: p.self_dev ?? false,
+    }))
+    .slice(0, MAX_RECENT);
+
+  if (projects.length === 0) return false;
+
+  setRecentProjects(projects);
+  setActiveProject(projects[0]);
+  return true;
+}
+
+/** The recents list, shaped for `config.toml`. */
+export function collectProjects() {
+  return recentProjects().map((p) => ({
+    name: p.name,
+    path: p.path,
+    self_dev: p.selfDev ?? false,
+  }));
+}
+
+/**
+ * Seed from wherever the host was launched. No-op in the browser build.
+ *
+ * Skipped entirely when the config already restored a project: `fs_cwd` answers
+ * "where the binary started", which after 0.1 is the wrong answer — reopening
+ * the app should land you where you left off, not wherever the launcher lives.
+ */
 export async function bootProject(): Promise<void> {
+  if (activeProject()) return;
   const dir = await cwd();
   if (dir) openProject(dir);
 }

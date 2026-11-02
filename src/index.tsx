@@ -14,13 +14,41 @@ import "./home/home.css";
 
 import { App } from "./shell/App";
 import { registerBuiltins } from "./modules";
-import { bootProject } from "./shell/project";
+import { loadConfig } from "./shell/config";
+import { hydrateEdges } from "./shell/edges";
+import { hydratePrefs } from "./shell/prefs";
+import { bootProject, hydrateProjects } from "./shell/project";
+import { modules } from "./shell/registry";
 
-// Boot order: registry first, so the shell has modules to place on edges
-// before it ever renders a frame; then the active project, so the first
-// terminal pane spawns inside it rather than wherever the binary started.
-registerBuiltins();
+/**
+ * Boot order, and why it is this order.
+ *
+ * 1. **Registry first** — the shell needs modules to place on edges before it
+ *    renders a frame, and `hydrateEdges` validates stored ids against the
+ *    registry, so the registry has to exist before the config is applied.
+ * 2. **Config next** — applied before the first render so the configured edges
+ *    and toggles are in place for the first frame. Rendering defaults and
+ *    correcting them a tick later is a visible flicker on every launch; reading
+ *    one small file is faster than that. `loadConfig` has its own timeout, so a
+ *    wedged IPC delays the window rather than preventing it forever.
+ * 3. **Project last** — and only if the config did not restore one, because
+ *    `fs_cwd` answers "where the binary started", which is the wrong answer
+ *    once a project can be remembered.
+ */
+async function boot(): Promise<void> {
+  registerBuiltins();
 
-void bootProject()
-  .catch((err) => console.error("[boot] could not resolve a project:", err))
+  const { config } = await loadConfig();
+  hydrateEdges(
+    config.edges,
+    modules().map((m) => m.id),
+  );
+  hydratePrefs(config.performance);
+  hydrateProjects(config.projects);
+
+  await bootProject();
+}
+
+void boot()
+  .catch((err) => console.error("[boot] failed, starting on defaults:", err))
   .finally(() => render(() => <App />, document.getElementById("root")!));

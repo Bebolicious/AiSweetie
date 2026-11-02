@@ -252,3 +252,19 @@
   color: var(--ink-dimmer);
   font-size: var(--fs-micro);
 }
+
+/* Where config.toml is, and why it is not being written when it is not.
+   Sits between the header and the body so it is read before the settings it
+   governs, not after. */
+.config-line {
+  margin: 0;
+  padding: 0 2px 4px;
+  flex: none;
+  color: var(--ink-dimmer);
+  font-size: var(--fs-micro);
+  overflow-wrap: anywhere;
+}
+
+.config-line--bad {
+  color: var(--warn);
+}

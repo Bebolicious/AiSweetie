@@ -5,6 +5,7 @@
 //! else.
 
 mod agents;
+mod config;
 mod fsx;
 mod git;
 mod probe;
@@ -42,6 +43,8 @@ pub fn run() {
             agents::agent_spawn,
             agents::agent_kill,
             agents::agent_available,
+            config::config_load,
+            config::config_save,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
