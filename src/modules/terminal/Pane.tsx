@@ -2,7 +2,7 @@ import { onCleanup, onMount } from "solid-js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
-import type { UnlistenFn } from "@tauri-apps/api/event";
+import { createDisposers } from "../../shell/disposers";
 import { hasPty, pty } from "./pty";
 
 /** xterm's palette, pulled from the suite's tokens so panes match the shell. */
@@ -91,16 +91,19 @@ export function Pane(props: {
 
     fit.fit();
 
-    let unlistenOut: UnlistenFn | undefined;
-    let unlistenExit: UnlistenFn | undefined;
-    let disposed = false;
+    const subs = createDisposers();
 
     if (hasPty()) {
       void (async () => {
-        unlistenOut = await pty.onOutput(props.id, (bytes) => term.write(bytes));
-        unlistenExit = await pty.onExit(props.id, () => props.onExit());
-        if (disposed) return;
-        await pty.spawn(props.id, term.cols, term.rows, props.cwd);
+        await subs.add(pty.onExit(props.id, () => props.onExit()));
+        // Do not spawn a shell for a pane that is already gone — it would
+        // outlive its only subscriber.
+        if (subs.disposed) return;
+        // The output channel is created inside spawn(), before the command is
+        // sent, so there is no gap where the shell is live and unobserved.
+        await pty.spawn(props.id, term.cols, term.rows, props.cwd, (bytes) =>
+          term.write(bytes),
+        );
         term.onData((d) => void pty.write(props.id, d));
       })();
     } else {
@@ -118,10 +121,8 @@ export function Pane(props: {
     host.addEventListener("mousedown", props.onFocus);
 
     onCleanup(() => {
-      disposed = true;
+      subs.dispose();
       ro.disconnect();
-      unlistenOut?.();
-      unlistenExit?.();
       if (hasPty()) void pty.kill(props.id);
       term.dispose();
     });

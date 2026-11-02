@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import { render } from "solid-js/web";
+import { mountView } from "../../shell/mountView";
 import type { Binding, ModuleContext, Project, SuiteModule } from "@suite/module";
 import { Pane } from "./Pane";
 import {
@@ -239,7 +239,7 @@ export function terminalModule(): SuiteModule {
     version: "0.3.0",
 
     mount(container: HTMLElement, ctx: ModuleContext) {
-      dispose = render(
+      dispose = mountView(
         () => (
           <TerminalView
             register={(b) => {

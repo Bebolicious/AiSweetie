@@ -4,6 +4,7 @@ export interface Entry {
   name: string;
   path: string;
   dir: boolean;
+  /** Bytes. Always 0 for a directory — the host does not count children. */
   size: number;
   modified: number;
   hidden: boolean;
@@ -14,13 +15,22 @@ export interface FileBody {
   lines: number;
   bytes: number;
   textual: boolean;
+  /** The file's mtime when this was read. Hand it back as `known` to revalidate. */
+  modified: number;
+  /** `known` matched: nothing was read, so keep what you already had. */
+  unchanged: boolean;
 }
 
 export const hasHost = () => "__TAURI_INTERNALS__" in window;
 
 export const fsx = {
   list: (path: string) => invoke<Entry[]>("fs_list", { path }),
-  read: (path: string) => invoke<FileBody>("fs_read", { path }),
+  /**
+   * Read a file, or — when `known` is the mtime of a copy you already hold —
+   * find out for the price of one `stat` that you can keep it.
+   */
+  read: (path: string, known?: number) =>
+    invoke<FileBody>("fs_read", { path, known }),
 };
 
 const UNITS = ["B", "KB", "MB", "GB", "TB"];

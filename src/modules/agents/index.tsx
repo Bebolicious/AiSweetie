@@ -9,10 +9,11 @@ import {
   Switch,
 } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import { render } from "solid-js/web";
+import { mountView } from "../../shell/mountView";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import type { Binding, ModuleContext, Project, SuiteModule } from "@suite/module";
+import { createDisposers } from "../../shell/disposers";
 import { focus as shellFocus } from "../../shell/focus";
 import {
   formatElapsed,
@@ -39,12 +40,26 @@ interface Agent {
   prompt: string;
   state: State;
   items: Item[];
+  /** Transcript items discarded by the cap, so the count stays honest. */
+  dropped: number;
   startedAt: number;
   endedAt?: number;
   inTokens: number;
   outTokens: number;
   costUsd: number;
 }
+
+/**
+ * How much of a transcript is kept.
+ *
+ * The transcript is append-only and every item is a rendered DOM node, so an
+ * agent doing heavy tool use grew the document without bound — and this is an
+ * app you start on Monday and leave running. The newest events are the ones
+ * anyone reads; the rest is scrollback nobody scrolls. The `result` item that
+ * carries the final token and cost totals is copied onto the agent itself as
+ * it arrives, so trimming can never lose the numbers.
+ */
+const MAX_ITEMS = 500;
 
 let seq = 0;
 
@@ -58,8 +73,15 @@ function AgentsView(props: {
   const [draft, setDraft] = createSignal("");
   const [now, setNow] = createSignal(Date.now());
 
-  const timer = setInterval(() => setNow(Date.now()), 1000);
-  onCleanup(() => clearInterval(timer));
+  // `now` exists only to advance the elapsed counters, so the timer exists
+  // only while there is something to count. Idle — which is most of the time,
+  // and all of the time for anyone who does not use this module — costs
+  // nothing rather than re-rendering every card once a second forever.
+  createEffect(() => {
+    if (!agents.some((a) => a.state === "running")) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    onCleanup(() => clearInterval(timer));
+  });
 
   const [available] = createResource<ClaudeStatus>(async () =>
     hasHost() ? invoke<ClaudeStatus>("agent_available") : { found: false },
@@ -79,37 +101,42 @@ function AgentsView(props: {
     );
   });
 
-  // Subscribe once; route each line to the agent that owns it.
-  let unlistenLine: UnlistenFn | undefined;
-  let unlistenExit: UnlistenFn | undefined;
+  // Subscribe once; route each line to the agent that owns it. The disposers
+  // are collected rather than assigned, because `listen` resolves
+  // asynchronously and an unmount can land first — see shell/disposers.ts.
+  const subs = createDisposers();
 
   if (hasHost()) {
-    void (async () => {
-      unlistenLine = await listen<{ id: string; line: string }>(
-        "agent://line",
-        (e) => {
-          const i = indexOf(e.payload.id);
-          if (i === -1) return;
-          const items = parseAgentLine(e.payload.line);
-          if (!items.length) return;
-          setAgents(
-            i,
-            produce((a) => {
-              for (const item of items) {
-                a.items.push(item);
-                if (item.kind === "result") {
-                  a.inTokens = item.inTokens;
-                  a.outTokens = item.outTokens;
-                  a.costUsd = item.costUsd;
-                }
-                if (item.kind === "error") a.state = "failed";
+    void subs.add(
+      listen<{ id: string; line: string }>("agent://line", (e) => {
+        const i = indexOf(e.payload.id);
+        if (i === -1) return;
+        const items = parseAgentLine(e.payload.line);
+        if (!items.length) return;
+        setAgents(
+          i,
+          produce((a) => {
+            for (const item of items) {
+              a.items.push(item);
+              if (item.kind === "result") {
+                a.inTokens = item.inTokens;
+                a.outTokens = item.outTokens;
+                a.costUsd = item.costUsd;
               }
-            }),
-          );
-        },
-      );
+              if (item.kind === "error") a.state = "failed";
+            }
+            const over = a.items.length - MAX_ITEMS;
+            if (over > 0) {
+              a.items.splice(0, over);
+              a.dropped += over;
+            }
+          }),
+        );
+      }),
+    );
 
-      unlistenExit = await listen<{ id: string }>("agent://exit", (e) => {
+    void subs.add(
+      listen<{ id: string }>("agent://exit", (e) => {
         const i = indexOf(e.payload.id);
         if (i === -1) return;
         setAgents(
@@ -119,13 +146,12 @@ function AgentsView(props: {
             a.endedAt = Date.now();
           }),
         );
-      });
-    })();
+      }),
+    );
   }
 
   onCleanup(() => {
-    unlistenLine?.();
-    unlistenExit?.();
+    subs.dispose();
     for (const a of agents) {
       if (a.state === "running") void invoke("agent_kill", { id: a.id });
     }
@@ -141,6 +167,7 @@ function AgentsView(props: {
       prompt,
       state: "running",
       items: [],
+      dropped: 0,
       startedAt: Date.now(),
       inTokens: 0,
       outTokens: 0,
@@ -313,6 +340,11 @@ function AgentsView(props: {
                   </header>
 
                   <div class="ag-body">
+                    <Show when={a().dropped > 0}>
+                      <div class="ti ti--system">
+                        {a().dropped} earlier events trimmed
+                      </div>
+                    </Show>
                     <For
                       each={a().items}
                       fallback={<p class="muted pad">waiting for first event…</p>}
@@ -419,7 +451,7 @@ export function agentsModule(): SuiteModule {
     version: "0.2.0",
 
     mount(container: HTMLElement, ctx: ModuleContext) {
-      dispose = render(
+      dispose = mountView(
         () => (
           <AgentsView
             register={(b) => (bindings = b)}

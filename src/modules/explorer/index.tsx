@@ -6,11 +6,25 @@ import {
   For,
   Match,
   on,
+  onCleanup,
   Show,
   Switch,
 } from "solid-js";
-import { render } from "solid-js/web";
-import hljs from "highlight.js/lib/common";
+import { mountView } from "../../shell/mountView";
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import css from "highlight.js/lib/languages/css";
+import go from "highlight.js/lib/languages/go";
+import ini from "highlight.js/lib/languages/ini";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import markdown from "highlight.js/lib/languages/markdown";
+import powershell from "highlight.js/lib/languages/powershell";
+import python from "highlight.js/lib/languages/python";
+import rust from "highlight.js/lib/languages/rust";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
 import type { Binding, ModuleContext, Project, SuiteModule } from "@suite/module";
 import {
   fsx,
@@ -20,7 +34,10 @@ import {
   parentOf,
   relativeTime,
   type Entry,
+  type FileBody,
 } from "./api";
+import { debounced } from "../../shell/debounce";
+import { createLru } from "../../shell/lru";
 import { tailSegments } from "../../shell/paths";
 import "highlight.js/styles/tokyo-night-dark.css";
 import "./explorer.css";
@@ -46,7 +63,82 @@ const LANG_BY_EXT: Record<string, string> = {
   ps1: "powershell",
 };
 
+/**
+ * Exactly the grammars `LANG_BY_EXT` names, registered against
+ * highlight.js/lib/core.
+ *
+ * Not `lib/common`, which carries about forty languages and was the single
+ * largest thing in the bundle. Adding an extension above means adding its
+ * import here — which is the point: the cost of a language is visible.
+ */
+for (const [name, lang] of Object.entries({
+  bash,
+  css,
+  go,
+  ini,
+  javascript,
+  json,
+  markdown,
+  powershell,
+  python,
+  rust,
+  typescript,
+  xml,
+  yaml,
+})) {
+  hljs.registerLanguage(name, lang);
+}
+
+/**
+ * Above this, highlighting costs more than it is worth.
+ *
+ * `fs_read` already refuses to read past 512 KB, but reading is the cheap
+ * half — highlighting a file that size is long enough to drop frames, and a
+ * file that large is usually minified or generated and unreadable anyway.
+ */
+const HIGHLIGHT_LIMIT = 128 * 1024;
+
+/**
+ * How many rendered previews to keep.
+ *
+ * A count rather than a byte budget because `HIGHLIGHT_LIMIT` already bounds
+ * each entry: nothing larger than 128 KB is highlighted, so the worst case is
+ * eight files' text plus their markup, not "however big the files were".
+ */
+const PREVIEW_CACHE = 8;
+
 const extOf = (name: string) => name.split(".").pop()?.toLowerCase() ?? "";
+
+/** A preview, after both the parts that cost something. */
+interface Rendered {
+  body: FileBody;
+  /** The mtime this was read at, used to revalidate it. */
+  modified: number;
+  /** Highlighted markup, or null when the file renders as plain text. */
+  html: string | null;
+}
+
+/**
+ * Highlight a file, or decline to.
+ *
+ * There is deliberately no `highlightAuto` fallback. It runs every registered
+ * grammar over the text and scores them, so an unrecognised extension —
+ * `.lock`, `.txt`, `.cfg`, no extension at all — paid for every language at
+ * once, synchronously on the main thread. Returning null renders plain text,
+ * which the preview's `Switch` already falls through to.
+ */
+function highlightOf(name: string, body: FileBody): string | null {
+  if (!body.textual || body.bytes > HIGHLIGHT_LIMIT) return null;
+
+  const lang = LANG_BY_EXT[extOf(name)];
+  if (!lang || !hljs.getLanguage(lang)) return null;
+
+  try {
+    return hljs.highlight(body.text, { language: lang }).value;
+  } catch {
+    return null;
+  }
+}
 
 function ExplorerView(props: {
   register: (b: Binding[]) => void;
@@ -91,32 +183,84 @@ function ExplorerView(props: {
 
   createEffect(() => props.report(dir(), visible().length));
 
-  // Keep a file selected so the preview pane is never pointlessly blank.
+  /**
+   * Keep a file selected so the preview pane is never pointlessly blank.
+   *
+   * Keyed on the directory listing, **not** on the filtered view. Keying it on
+   * `visible()` meant that filtering something out from under the selection
+   * re-pointed it at the first remaining match — so every keystroke in the
+   * filter could change the selection, and every selection change is an IPC
+   * file read plus a synchronous whole-file highlight. Typing `comp` ran that
+   * four times for three results nobody asked to see.
+   *
+   * It also read badly: the preview flickered through unrelated files while
+   * you typed. Filtering now only filters. `Enter` opens the top match, which
+   * is the affordance that was already there for choosing one.
+   */
   createEffect(() => {
-    const list = visible();
+    const all = entries() ?? [];
     const cur = selected();
-    if (cur && list.some((e) => e.path === cur.path)) return;
-    setSelected(list.find((e) => !e.dir) ?? null);
+    if (cur && all.some((e) => e.path === cur.path)) return;
+    setSelected(all.find((e) => !e.dir) ?? null);
   });
 
-  const [body] = createResource(
-    () => selected()?.path ?? null,
-    (p) => fsx.read(p),
-  );
+  /**
+   * What the preview pane is showing, which lags the selection on purpose.
+   *
+   * The listing's row highlight follows `selected()` instantly; only the
+   * expensive half — the read and the syntax highlight — waits for this. So
+   * clicking quickly down a listing costs one read rather than one per row,
+   * without the selection ever feeling delayed.
+   *
+   * The whole entry is debounced rather than just its path, so everything the
+   * pane renders comes from the same instant. Debouncing only the path would
+   * leave the language and the file name a step ahead of the text, and
+   * `highlighted()` would run the new grammar over the old content — wrong on
+   * screen, and a wasted highlight before the right one.
+   */
+  const preview = debounced(selected, 120);
 
-  const highlighted = createMemo(() => {
-    const file = body();
-    const sel = selected();
-    if (!file?.textual || !sel) return null;
-    const lang = LANG_BY_EXT[extOf(sel.name)];
-    try {
-      return lang && hljs.getLanguage(lang)
-        ? hljs.highlight(file.text, { language: lang }).value
-        : hljs.highlightAuto(file.text).value;
-    } catch {
-      return null;
-    }
+  /**
+   * Reading and highlighting a file, cached.
+   *
+   * Both halves are cached together because the read is the cheap one — it is
+   * off the main thread entirely (see `task` on the Rust side) — while the
+   * highlight is synchronous JavaScript over the whole file. Caching the read
+   * alone would leave the part that actually drops frames.
+   *
+   * **Every hit is revalidated.** The cached mtime goes back to the host as
+   * `known`, and the hit is honoured only if the file still has that mtime.
+   * What is saved is the read, an IPC payload of up to 512 KB, and the
+   * highlight; what it costs is one `stat`.
+   *
+   * It is tempting to validate against the mtime `fs_list` already reported
+   * and skip the IPC altogether, which is what this first did. That is
+   * unsound: a listing is a snapshot, nothing re-lists a directory you are
+   * already looking at, so a file edited in a terminal pane would be served
+   * from here for as long as you stayed put. Showing stale file contents to
+   * save a `stat` is the same bargain refused for `git_status`.
+   */
+  const previews = createLru<Rendered>(PREVIEW_CACHE);
+  // Rule 7: a module releases what it holds. The cache is per mount rather
+  // than module-level so a reload does not keep a disposed module's files.
+  onCleanup(() => previews.clear());
+
+  const [rendered] = createResource(preview, async (entry) => {
+    const hit = previews.get(entry.path);
+    const body = await fsx.read(entry.path, hit?.modified);
+
+    // `unchanged` means the host stopped after `metadata` and read nothing.
+    if (body.unchanged && hit) return hit;
+
+    return previews.set(entry.path, {
+      body,
+      modified: body.modified,
+      html: highlightOf(entry.name, body),
+    });
   });
+
+  const body = () => rendered()?.body;
+  const highlighted = () => rendered()?.html ?? null;
 
   function open(entry: Entry) {
     if (entry.dir) {
@@ -253,10 +397,10 @@ function ExplorerView(props: {
                       </Show>
                       {e.name}
                     </span>
+                    {/* No child count for directories: producing it cost a
+                        read_dir per row. See `list` in src-tauri/src/fsx.rs. */}
                     <span class="row__size">
-                      {e.dir
-                        ? `${e.size} item${e.size === 1 ? "" : "s"}`
-                        : humanSize(e.size)}
+                      {e.dir ? "—" : humanSize(e.size)}
                     </span>
                     <span class="row__mod">{relativeTime(e.modified)}</span>
                   </button>
@@ -288,7 +432,7 @@ function ExplorerView(props: {
 
           <aside class="panel exp-preview">
             <Show
-              when={selected()}
+              when={preview()}
               fallback={<p class="muted">select a file to preview</p>}
             >
               {(sel) => (
@@ -305,7 +449,7 @@ function ExplorerView(props: {
                   </div>
                   <div class="exp-preview__body">
                     <Switch>
-                      <Match when={body.loading}>
+                      <Match when={rendered.loading}>
                         <p class="muted pad">reading…</p>
                       </Match>
                       <Match when={body() && !body()!.textual}>
@@ -366,7 +510,7 @@ export function explorerModule(): SuiteModule {
     version: "0.2.0",
 
     mount(container: HTMLElement, ctx: ModuleContext) {
-      dispose = render(
+      dispose = mountView(
         () => (
           <ExplorerView
             register={(b) => (bindings = b)}

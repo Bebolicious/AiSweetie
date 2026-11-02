@@ -40,7 +40,7 @@ its own geometry, and the reason edge colors follow the *direction* rather than 
 | UI | **Solid + JSX** | No virtual DOM; fine-grained reactivity suits dense, high-frequency panels. The prototype was React 18, but tokenizing the mock meant rebuilding from primitives anyway, so the migration cost was already sunk. |
 | Terminal | **`@xterm/xterm`** + WebGL addon; PTYs owned by Rust via **`portable-pty`** | Writing terminal emulation is a multi-year project. Multiplexing happens in-process rather than shelling out to tmux, because shelling out forfeits control of pane geometry — and pane geometry is the module's whole point. |
 | Git | **`git` CLI**, parsed | Hunk-level staging is the deciding feature, and libgit2 handles partial-hunk staging badly. Generating a patch and feeding it to `git apply --cached` is what lazygit and gitui do too. |
-| Module system | **In-process ES modules** | Simplest thing that permits runtime swap. Accepted cost: a broken module can take down the shell. Tolerable while the module set is ours; the contract is shaped so sandboxed iframes remain possible later. |
+| Module system | **In-process ES modules** | Simplest thing that permits runtime swap. Accepted cost: a module shares the shell's process and can still exhaust it. A *render* error no longer takes the shell down — `shell/mountView.tsx` puts an error boundary inside each module's own root — but an infinite loop or a memory leak is still shared. Tolerable while the module set is ours; the contract is shaped so sandboxed iframes remain possible later. |
 | Animation | **CSS transform + bezier** | One composited layer, GPU-driven, no JS running during the swap. A hand-rolled spring integrator would put JavaScript on the critical path of the one interaction that must never stutter. |
 | AI | **Anthropic API direct from Rust** (planned) + **Claude Code as subprocess** (today) | Two paths for two jobs — see §13. |
 | Config | **TOML via serde**, `directories` crate | Human-editable, diffable, and the file is part of the product: you are expected to read it. |
@@ -73,14 +73,20 @@ aisweete/
 │   ├── design/                  ← tokens.css, shell.css, common.css, settings.css
 │   ├── home/                    ← Home.tsx, Clock.tsx, Projects.tsx, PromptPill.tsx
 │   ├── shell/                   ← the world, services, and chrome (§4, §7, §8)
+│   │                              plus the primitives modules borrow:
+│   │                              mountView, disposers, debounce, lru
 │   └── modules/<id>/            ← one directory per module (§10)
 │
 ├── src-tauri/
 │   ├── tauri.conf.json          ← window, bundle, security
 │   ├── capabilities/default.json
-│   └── src/                     ← lib.rs, pty.rs, git.rs, fsx.rs, agents.rs (§9)
+│   └── src/                     ← lib.rs, pty.rs, git.rs, fsx.rs, agents.rs,
+│                                  probe.rs, task.rs (§9)
 │
-└── ui-mock/                     ← the Design Compiler prototype + five reference PNGs
+└── ui-mock/                     ← the Design Compiler prototype + five reference PNGs.
+                                    NOT in the repository: `.gitignore` excludes it,
+                                    so a clone will not have it. Design reference,
+                                    kept locally on purpose.
 ```
 
 Modules import the contract by **package name**, not relative path:
@@ -92,6 +98,10 @@ alias: { "@suite/module": fileURLToPath(new URL("./packages/suite-module/index.t
 
 That alias is not cosmetic. It means a module's source has no structural dependency on living inside
 this repo — a prerequisite for third-party modules later.
+
+`ui-mock/` is gitignored, so everything in this subsection describes something a clone does not
+have. It is referred to anyway because it is where several decisions came from, and a reader with
+the file should know what it is and is not.
 
 `ui-mock/AI Suite Prototype.dc.html` is a working Design Compiler prototype, not a static mock. Its
 `support.js` runtime is present but the file is a 1920×1080 fixed-size world, so treat it as a
@@ -217,6 +227,30 @@ Three toggles in Settings → Performance, surfaced as `data-*` attributes on `:
 
 `prefers-reduced-motion: reduce` collapses `--swap-ms` to 1 ms unconditionally.
 
+### Blur is paid for only where it shows
+
+The three toggles above are what the *user* can turn off. Two rules in `shell.css` turn blur off
+without being asked, because in both cases nobody can see it:
+
+- **Nothing blurs while the world is in flight** (`.track[data-moving="true"]`). A
+  `backdrop-filter` forces its own render surface at any radius — `blur(0)` costs what `blur(14px)`
+  costs, which is why the rules say `none` — and swap start is exactly when the incoming cell's
+  tiles must be rasterised. Fifteen render surfaces at that moment is the stutter the whole design
+  is organised against.
+- **Nothing blurs in a cell you are not looking at** (`.cell[data-live="false"]`). All five cells
+  share one composited layer, so there is no culling to save us; an off-screen panel's blur is
+  rasterised with everything else. This is the steady state — sitting on home with four modules
+  parked off-screen.
+
+Panel opacity deliberately does *not* compensate for either, unlike the permanent
+`[data-blur="off"]` hatch. These are transient, and a panel that brightened for 440 ms on every
+swap would be more noticeable than a blur that is missing while the screen is moving.
+
+The same principle governs the shell's timers: `useStatus` compares the three fields of a
+`StatusSummary` before writing its signal, and skips polling entirely while `moving()` — nine
+pollers writing identical strings once a second was nine style recalculations on the layer being
+animated. `Clock` ticks on the minute rather than the second, because it renders `HH:MM`.
+
 ---
 
 ## 6. The module contract
@@ -315,13 +349,35 @@ preflight(): Promise<Check[]>;
 `loadFromPath` is **not implemented**. Vite cannot dynamic-import an arbitrary disk path; this needs
 the Rust side to serve module bundles over a custom protocol first.
 
-**File: `src/shell/ModuleFrame.tsx`** — one module in its cell. Two subtleties:
+**File: `src/shell/ModuleFrame.tsx`** — one module in its cell. Three subtleties:
 
 - **The frame is keyed to the module, not the edge.** Reassigning an edge moves this element to a
   different cell rather than remounting it. A terminal module carries live PTYs and a swap must not
   kill them.
 - **Keymaps register on view, not on mount.** `createEffect` registers `props.mod.keymap()` only
   while `view() === edge()`. That is what lets two modules both claim `j` without conflict.
+- **A failed `mount()` becomes a panel, not a blank cell.** The call is wrapped in `try`/`catch`
+  *as well as* `.catch()`, because `mount()` is evaluated to produce the value `Promise.resolve`
+  wraps — so a synchronous throw happens before there is a promise to attach a handler to, and
+  escapes into the shell's own root. That is the one failure that can blank the whole app.
+
+### Error containment
+
+**File: `src/shell/mountView.tsx`.** A module calls `render()` inside its own `mount()`, which
+creates a **separate reactive root** — so an `<ErrorBoundary>` in `ModuleFrame` cannot see anything
+that throws inside it. The boundary has to be inside the module's own root, which leaves two
+options: every module author remembers to add one, or the shell owns the call that creates the root.
+`mountView(view, container)` is the second option, and it is a drop-in replacement for `render`.
+
+The result: a module that throws while rendering loses its own cell and nothing else. The header,
+the rails, the arrow keys and the other three modules keep working. Tested in `mountView.test.tsx`,
+including the case `ModuleFrame`'s `try`/`catch` cannot reach — a throw that arrives later, with a
+signal change, after mounting already returned cleanly.
+
+This is **not** the doctor layer (§11). That handles a dependency being legitimately absent, which
+is expected and has a fix to offer. This handles a bug, which has neither. It also does not catch
+everything: a throw inside a `setTimeout`, an unhandled promise rejection, or a module that simply
+loops forever is still outside any boundary.
 
 ### Known behaviour: the HMR registry gap
 
@@ -417,12 +473,27 @@ world cannot slide out from under the modal.
 `probe.rs` is a support module rather than a command surface: it locates
 external binaries, and is the first piece of the doctor layer (§11) to exist.
 
-Five design notes worth knowing before you touch these files:
+Seven design notes worth knowing before you touch these files:
 
-- **PTY output crosses to the webview as base64, not `String`.** A PTY emits *bytes*, and a read can
+- **Every command that touches the OS is `async` over a synchronous function.** A `#[tauri::command]`
+  declared with plain `fn` runs on the main thread — the one pumping the window — and almost
+  everything here blocks: `git_status` alone is six process spawns. `src-tauri/src/task.rs` holds the
+  one-line helper they all go through. The two exceptions are deliberate and documented in place:
+  `pty_write` and `pty_resize` stay synchronous because neither blocks and both want the ordering
+  that one thread gives for free.
+- **PTY output crosses to the webview as raw bytes on a per-pane `Channel`, never as a `String`.**
+  Three decisions stacked there, each with its own reason. A PTY emits *bytes*, and a read can
   land midway through a multi-byte UTF-8 sequence. Decoding in Rust would corrupt exactly the
   box-drawing and emoji output that a terminal module exists to render. The frontend hands raw bytes
-  to xterm, which already knows how to reassemble them.
+  to xterm, which already knows how to reassemble them. It is a *channel* rather than `app.emit`
+  because `emit` broadcasts — every pane's listener used to receive every other pane's bytes and
+  discard them in JavaScript. And chunks are *coalesced* over a 3 ms window because Tauri sends a
+  raw channel payload under 1 KB as an `eval`'d JSON number array and only uses the binary fetch
+  path at or above it; batching is what moves bulk output onto the efficient path rather than a
+  refinement on top of it. `pty.rs`'s own tests cover the part that must never break — that every
+  byte arrives once, in order, including the tail after EOF.
+- **Keystrokes reach the shell through a per-pane writer thread**, not a `Write` called inline.
+  A write to a full PTY buffer blocks, and ordering has to survive however `pty_write` is dispatched.
 - **Hunk staging generates a patch and runs `git apply --cached`.** Deliberately not libgit2/gix.
   The patch is rebuilt in TypeScript (`src/modules/git/diff.ts`) from the parsed unified diff.
 - **`git diff --no-index` exits 1 when files differ**, which is the normal case for untracked-file
@@ -779,23 +850,52 @@ npm test          # vitest run
 cargo test        # in src-tauri/
 ```
 
+**Shell primitives.** Small, pure, and the place a subtle invariant gets pinned down.
+
 | Suite | Covers |
 |---|---|
-| `src/shell/paths.test.ts` | Cross-platform path manipulation |
-| `src/shell/project.test.ts` | Path normalization, project naming, recents ordering and bound |
-| `src/shell/shell.test.tsx` | Navigation, the return-arrow rule, keymap layering, the bus |
-| `src/modules/git/diff.test.ts` | Unified-diff parsing and single-hunk patch reconstruction |
-| `src/modules/git/switch.test.tsx` | A mounted git module re-scopes when the active project changes (mocked host) |
-| `src/modules/explorer/switch.test.tsx` | A mounted explorer lands at the new project root after a switch (mocked host) |
-| `src/modules/terminal/panes.test.ts` | Pane tree split / close / zoom |
-| `src/modules/explorer/api.test.ts` | Listing and filtering |
-| `src/modules/agents/stream.test.ts` | `stream-json` line parsing |
-| `src-tauri/src/git_tests.rs` | Git command construction and output parsing |
+| `shell/paths.test.ts` | Cross-platform path manipulation |
+| `shell/project.test.ts` | Path normalization, project naming, recents ordering and bound |
+| `shell/shell.test.tsx` | Navigation, the return-arrow rule, keymap layering, the bus |
+| `shell/disposers.test.ts` | A disposer that arrives *after* disposal is disposed, not kept (§7) |
+| `shell/debounce.test.ts` | Intermediate values are never observed, so work keyed off it runs once |
+| `shell/lru.test.ts` | Eviction order, promotion on read, and that capacity 0 is not a cache that stores nothing |
+| `shell/mountView.test.tsx` | A module that throws loses its own cell and nothing else — including a throw that arrives later, with a signal change |
+| `shell/useStatus.test.ts` | No write when the summary reads the same; no polling at all while the world is in flight |
 
-The highest-value gap: the Rust PTY layer has no tests (hard to test without a real PTY — a
-spawn-echo-read integration test is the realistic target). The two `switch.test.tsx` files are the
-first tests to drive a module through mount → change → unmount against a mocked host; the pattern
-is worth extending.
+**Modules, driven through a mocked host.** These mount a real module and assert on what it asks the
+host for, which is how the expensive mistakes get caught — the cost is almost always a process spawn
+or a synchronous highlight, and counting calls is more honest than inspecting state.
+
+| Suite | Covers |
+|---|---|
+| `modules/git/diff.test.ts` | Unified-diff parsing and single-hunk patch reconstruction |
+| `modules/git/switch.test.tsx` | A mounted git module re-scopes when the active project changes |
+| `modules/git/calls.test.tsx` | One host call per event, and *which* calls bypass the host's caches |
+| `modules/git/diffsize.test.tsx` | A 5000-line diff renders 100 or 600 rows, and the remainder stays reachable |
+| `modules/explorer/api.test.ts` | Listing and filtering |
+| `modules/explorer/switch.test.tsx` | A mounted explorer lands at the new project root after a switch |
+| `modules/explorer/filter.test.tsx` | Filtering reads no files; re-selecting re-reads nothing; a changed file is re-read |
+| `modules/terminal/panes.test.ts` | Pane tree split / close / zoom |
+| `modules/agents/stream.test.ts` | `stream-json` line parsing |
+
+**Rust.**
+
+| Suite | Covers |
+|---|---|
+| `git_tests.rs` | A real repository in a temp directory: staging a hunk, renames, quoted paths, ahead/behind, detached HEAD, the refs fingerprint |
+| `git.rs::tests` | The refs cache in isolation — hit, miss, `fresh` bypass, errors uncached, bounded |
+| `pty.rs::tests` | The output batcher: every byte once, in order, tail flushed on EOF, and the loop ends when the webview goes |
+| `probe.rs::tests` | Binary resolution order, and that an explicit override fails rather than falling back |
+
+Plus four `#[ignore]`-d measurements, listed in §17. They print distributions and timings rather
+than asserting; `cargo test -- --ignored --nocapture`.
+
+The remaining highest-value gap is the PTY **session** layer: spawn, write-echo, resize and reaping
+all need a real PTY, and an attempt to drive one from a test harness did not terminate — the child
+outlived `wait()` and the reader never saw EOF while the master was held. That is worth resolving on
+its own terms, because if it reflects how ConPTY behaves in the app then `reap` never runs on
+Windows and a shell exited with `exit` is never collected.
 
 ---
 
@@ -818,6 +918,111 @@ does not leave you expecting features that do not exist.
 | No command palette (`mod+k`) | — | 0.9 |
 | No autostart; `bundle.targets` still `"all"` | `tauri.conf.json` | 0.10 |
 | `csp: null` — must tighten before third-party modules | `tauri.conf.json` | Phase 4 |
+
+### Measured, so these stop being guesses
+
+Four `#[ignore]`-d measurements live beside the code they measure. They are not checks — they print
+distributions and timings. `cargo test -- --ignored --nocapture`.
+
+| What | Where | Result |
+|---|---|---|
+| PTY batch sizes | `pty.rs::measure_batch_sizes` | 2 MB of build output → 9602 reads, **33 messages**, p50 64 KB, 0% of bytes on the slow `eval` path. A 40 ms trickle is 100% `eval` and 216 bytes total. |
+| `fs_list` child counting | `fsx.rs::measure_fs_list` | 4.6 ms → 0.2 ms on this repo's `node_modules` (87 subdirectories). 23×. |
+| …and how it scales | `fsx.rs::measure_fs_list_scaling` | ~50 µs per subdirectory: one frame at ~330, 100 ms at 2000. |
+| `git_status` | `git.rs::measure_git_status` | **101 ms → 32.7 ms.** Six sequential calls became three overlapping ones; a single `git rev-parse` is 11.9 ms, so three serial spawns is now the floor. |
+| Diff render size | `modules/git/diffsize.test.tsx` | 5000-line diff: 5000 rows → 100 (many hunks) or 600 (one hunk). |
+
+`git_status` was the instructive one. Six process spawns, fired on every refresh and every project
+switch, and until §9's async change all of it on the thread pumping the window — about six dropped
+frames. Async stopped it blocking but did not make it cheaper; that took two further changes, each
+worth roughly as much as the other:
+
+- **Four calls became one.** `status --porcelain=v2 --branch` answers the branch, the ahead/behind
+  counts and the changed files together, and `rev-parse --show-toplevel` turned out to be a process
+  spent re-deriving the root the caller had already been handed by `git_root`.
+- **The remaining three overlap**, started before any is collected. The two `--numstat` diffs are
+  genuinely distinct — index-vs-HEAD and worktree-vs-index, and no single git command yields both
+  separably — so they stay, but they no longer queue behind each other.
+
+The remaining 32.7 ms is almost exactly three times one spawn, so the children overlap fully and
+what is left is process creation itself.
+
+### Why `git_status` is not cached
+
+The obvious next step is a cache, and it is the wrong one. `modules/git/calls.test.tsx` counts what
+the module actually issues across a session — mount, two project switches, a refresh — and
+`git_status` fires **exactly once per event**. There is no repetition to absorb, so a cache could
+only reduce the latency of calls that never happen.
+
+It would also not be sound. Staleness here cannot be detected cheaply: staging and committing can be
+invalidated precisely because we perform them, but *editing a file in the worktree touches nothing
+inside `.git`*. A cache keyed on index or HEAD state would therefore keep reporting a file as
+unmodified after you changed it — and this module has no background refresh, so nothing would come
+along and correct it. The only sound form is a short TTL, which given the measured call pattern would
+essentially never hit.
+
+### What *is* cached: branches and the log
+
+These pass the test `git_status` fails. A branch list and a commit log are invalidated by exactly one
+thing — a ref changing — and that is observable from the filesystem for a handful of `stat`s and a
+few tiny reads, against ~12 ms to spawn `git`.
+
+`refs_fingerprint` in `git.rs` is the whole mechanism: the contents of `HEAD`, the size and mtime of
+`packed-refs`, and the contents of every loose ref under `refs/heads`. Loose refs are *read* rather
+than stat'd because a ref file is 41 bytes and a branch moving rewrites it to the same length — size
+would not change, and mtime granularity is a whole second on some filesystems. It returns `None` for
+a linked worktree or submodule, where `.git` is a file and HEAD and the refs can live in different
+directories; `None` means no caching at all rather than a guess.
+
+The win is specific and was the reason to bother: **staging a hunk calls `reload()`**, which
+refetches all three resources, and staging cannot move a ref. That was two spawns per stage for
+answers that had not changed. Pressing `r` passes `fresh`, which skips the lookup but still records
+the result — so refresh means refresh, including the relative commit ages that drift with wall-clock
+time and nothing else. Both directions are asserted in `modules/git/calls.test.tsx`.
+
+### What *is* cached: the explorer preview
+
+The same test applied to the explorer gives the opposite answer, and the difference is worth stating
+because it is the whole criterion: **staleness has to be detectable more cheaply than the work.**
+
+Selecting a file costs an `fs_read` plus a synchronous whole-file syntax highlight, and the
+highlight is the expensive half — it is JavaScript on the main thread, where the read is not. Both
+are cached together in an 8-entry LRU (`shell/lru.ts`), keyed on path.
+
+Every hit is revalidated. `fs_read` takes a `known` mtime and, when it matches, returns after the
+`metadata` call alone — nothing read, nothing sent over the IPC, nothing to re-highlight. A hit
+costs one `stat`.
+
+The first attempt validated against the mtime `fs_list` had already reported, making a hit free.
+That was unsound, and the test that caught it is worth keeping in mind: nothing re-lists a directory
+you are already looking at, so a file edited in a terminal pane would have been served from that
+cache for as long as you stayed put. Trading correct file contents for a `stat` is the same bargain
+refused above for `git_status`.
+
+### The diff refetch that measurement found
+
+`git_diff` was running **twice per event**, which is a real ~12 ms
+spawn wasted each time. Two compounding causes, both now fixed in `modules/git/index.tsx`:
+`autoSelect` returned a fresh object and the resource key a fresh array, so `createResource` could
+never find them equal and refetched on any upstream movement; and `status()` keeps serving the
+previous repository's data while refetching, so a switch spent a spawn asking the new repo for the
+old repo's file. The `root` field on `RepoStatus` exists to close that second one. The test asserts
+one call per command per event so it cannot drift back.
+
+Still unmeasured, and both need the real window rather than a test harness: swap frame timing, and
+cold start to first paint.
+
+Known gaps that are **defects in shipped code** rather than absent features, which is a category
+this document and the roadmap both lacked a place for:
+
+| Gap | Where |
+|---|---|
+| `git_diff_untracked` exists but nothing calls it — a new file shows "no textual diff" and `space` does nothing, despite §9 describing it as working | `modules/git/index.tsx` |
+| `useStatus` runs nine independent 1 s timers; one shared ticker would do | `useStatus.ts` |
+| The explorer listing has no keyboard navigation at all, in a keyboard-first app: `/`, `f`, `backspace` and `.` are the only bindings, so moving the selection needs the mouse | `modules/explorer/index.tsx` |
+| `git_root` re-resolves on every project switch, including switching back to one already resolved | `modules/git/index.tsx` |
+| No `[profile.release]` — no LTO, `codegen-units`, or `strip` | `src-tauri/Cargo.toml` |
+| Only the PTY output batcher is tested; spawn, write-echo, resize and reap are not | `pty.rs` |
 
 On the home screen specifically, the absence is a decision, not an oversight —
 `src/home/home.css:1`:
@@ -850,3 +1055,7 @@ The short list. Every one of these exists because breaking it breaks something v
 9. **Use the design tokens.** No hardcoded hex. A module with its own palette looks foreign on three
    of the four edges.
 10. **Emit on the bus rather than reaching into another module.** Modules do not import each other.
+11. **Render through `mountView`, not `render`.** It is a drop-in replacement that puts an error
+    boundary inside your reactive root, which is the only place one can catch anything you throw
+    (§7). Call `render` directly and a bug in your view takes the whole shell down instead of just
+    your cell.

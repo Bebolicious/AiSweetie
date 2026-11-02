@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, onMount } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { ModuleContext, SuiteModule } from "@suite/module";
 import { cellPosition, FACES_HOME, GRID, OFF_WORLD } from "./track";
 import { edgeOf, EDGE_HUE } from "./edges";
@@ -24,6 +24,13 @@ export function ModuleFrame(props: { mod: SuiteModule }) {
   };
   const status = useStatus(() => props.mod);
 
+  /**
+   * Set when `mount()` itself failed, as opposed to the view throwing later —
+   * `mountView`'s boundary handles the latter, but it never gets the chance if
+   * the module died before it rendered anything.
+   */
+  const [mountError, setMountError] = createSignal<unknown>(null);
+
   let host!: HTMLDivElement;
 
   const ctx: ModuleContext = {
@@ -37,15 +44,33 @@ export function ModuleFrame(props: { mod: SuiteModule }) {
   };
 
   onMount(() => {
-    void Promise.resolve(props.mod.mount(host, ctx)).catch((err) =>
-      console.error(`[module] "${props.mod.id}" failed to mount:`, err),
-    );
+    const failed = (err: unknown) => {
+      console.error(`[module] "${props.mod.id}" failed to mount:`, err);
+      setMountError(err);
+    };
+    // try/catch as well as .catch(): `mount()` is called to produce the value
+    // `Promise.resolve` wraps, so a *synchronous* throw happens before there
+    // is a promise to attach a handler to, and escapes into the shell's own
+    // reactive root — which is the one failure that can blank the whole app.
+    try {
+      const pending = props.mod.mount(host, ctx);
+      if (pending) void Promise.resolve(pending).catch(failed);
+    } catch (err) {
+      failed(err);
+    }
   });
 
   onCleanup(() => {
-    void Promise.resolve(props.mod.unmount()).catch((err) =>
-      console.error(`[module] "${props.mod.id}" failed to unmount:`, err),
-    );
+    try {
+      const pending = props.mod.unmount();
+      if (pending) {
+        void Promise.resolve(pending).catch((err) =>
+          console.error(`[module] "${props.mod.id}" failed to unmount:`, err),
+        );
+      }
+    } catch (err) {
+      console.error(`[module] "${props.mod.id}" failed to unmount:`, err);
+    }
   });
 
   // A module's keys are live only while you are looking at it. Registering on
@@ -60,6 +85,8 @@ export function ModuleFrame(props: { mod: SuiteModule }) {
     <section
       class="cell"
       data-view={edge() ?? "off"}
+      // Drives the blur gating in shell.css — an off-screen cell pays nothing.
+      data-live={view() === edge() ? "true" : "false"}
       style={{
         ...position(),
         "--accent": EDGE_HUE[edge() ?? "top"],
@@ -77,7 +104,28 @@ export function ModuleFrame(props: { mod: SuiteModule }) {
         </button>
       </header>
 
-      <div class="module-body" ref={host} />
+      {/* The host div is the fallback so that `ref` is assigned before
+          onMount runs. It is replaced only if mounting actually failed. */}
+      <Show when={mountError()} fallback={<div class="module-body" ref={host} />}>
+        {(err) => (
+          <div class="module-body">
+            <div class="panel empty-state">
+              <div class="panel__label">{props.mod.title} FAILED TO START</div>
+              <p>
+                This module threw while mounting, so it has nothing to show.
+                The other edges still work — <code>esc</code> returns home.
+              </p>
+              <p>
+                <code>
+                  {err() instanceof Error
+                    ? (err() as Error).message
+                    : String(err())}
+                </code>
+              </p>
+            </div>
+          </div>
+        )}
+      </Show>
 
       <Rail
         side={FACES_HOME[edge() ?? "top"]}

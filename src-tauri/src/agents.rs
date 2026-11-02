@@ -18,6 +18,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::probe;
+use crate::task::blocking;
 
 /// Where the `claude` binary is, resolved once.
 ///
@@ -165,8 +166,11 @@ impl AgentManager {
 
 pub type SharedAgents = Arc<AgentManager>;
 
+/// Cloning the `Arc` out of `State` is what lets the work move to another
+/// thread: a `State` borrow cannot outlive the command, but the manager itself
+/// is shared by design.
 #[tauri::command]
-pub fn agent_spawn(
+pub async fn agent_spawn(
     app: AppHandle,
     state: tauri::State<'_, SharedAgents>,
     id: String,
@@ -175,19 +179,20 @@ pub fn agent_spawn(
     model: Option<String>,
     allow_writes: Option<bool>,
 ) -> Result<(), String> {
-    state.spawn(
-        app,
-        id,
-        prompt,
-        cwd,
-        model,
-        allow_writes.unwrap_or(false),
-    )
+    let agents = state.inner().clone();
+    blocking(move || {
+        agents.spawn(app, id, prompt, cwd, model, allow_writes.unwrap_or(false))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn agent_kill(state: tauri::State<'_, SharedAgents>, id: String) -> Result<(), String> {
-    state.kill(&id)
+pub async fn agent_kill(
+    state: tauri::State<'_, SharedAgents>,
+    id: String,
+) -> Result<(), String> {
+    let agents = state.inner().clone();
+    blocking(move || agents.kill(&id)).await
 }
 
 /// What the agents module knows about the `claude` CLI.
@@ -207,8 +212,22 @@ pub struct ClaudeStatus {
 }
 
 /// Whether the `claude` CLI is usable, and if not, what is wrong.
+///
+/// The slowest command in the app on a first call: resolution can fall through
+/// to spawning a login shell, which sources the user's whole profile, and then
+/// `--version` spawns `claude` itself. Two process spawns and a profile — on
+/// the main thread that was a visible freeze every time the agents tab mounted.
 #[tauri::command]
-pub fn agent_available() -> ClaudeStatus {
+pub async fn agent_available() -> ClaudeStatus {
+    tauri::async_runtime::spawn_blocking(available)
+        .await
+        .unwrap_or_else(|e| ClaudeStatus {
+            error: Some(format!("could not check for the CLI: {e}")),
+            ..ClaudeStatus::default()
+        })
+}
+
+pub(crate) fn available() -> ClaudeStatus {
     let Some(path) = claude_path() else {
         return ClaudeStatus::default();
     };

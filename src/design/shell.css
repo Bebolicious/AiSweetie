@@ -41,6 +41,35 @@
   background: var(--bg-screen);
 }
 
+/* ── where the blur is actually paid for ───────────────────────────────
+   Every floating panel asks for a 14px backdrop-filter, and a backdrop-filter
+   forces its own render surface whatever the radius — `blur(0)` costs the same
+   as `blur(14px)`, which is why these rules say `none`.
+
+   All five cells live inside one composited layer, so an off-screen panel's
+   blur is rasterised along with everything else; there is no culling to save
+   us. Two rules, two different reasons:
+
+   1. Nothing blurs while the world is in flight. At swap start the incoming
+      cell's tiles have to be rasterised, and doing that *with* fifteen render
+      surfaces is the stutter the whole design is organised against. The blur
+      returns when the world settles, one frame after the motion ends.
+   2. Nothing blurs in a cell you are not looking at. That is the steady state
+      — sitting on home with four modules parked off-screen — and it is pure
+      GPU memory and power for pixels nobody can see.
+
+   Panel opacity deliberately does *not* change with these, unlike the
+   `[data-blur="off"]` escape hatch in tokens.css. That hatch is permanent, so
+   it can compensate for the lost blur; these are transient, and a panel that
+   brightened for 440ms every swap would be far more visible than a blur that
+   is missing while the screen is moving. */
+.track[data-moving="true"] .panel,
+.track[data-moving="true"] .pill,
+.cell[data-live="false"] .panel,
+.cell[data-live="false"] .pill {
+  backdrop-filter: none;
+}
+
 /* A soft radial tint anchored toward home, in that edge's own hue. Sized in
    viewport units so it scales with the display instead of pinning to 1100px. */
 .cell[data-view="home"] {
