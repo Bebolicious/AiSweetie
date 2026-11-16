@@ -4,7 +4,10 @@ import { BACK_FROM, GRID, trackTransform } from "./track";
 import { go, moving, nav, view } from "./nav";
 import { modules } from "./registry";
 import { router } from "./context";
-import { syncPrefsToDom } from "./prefs";
+import { collectPrefs, syncPrefsToDom } from "./prefs";
+import { collectEdges } from "./edges";
+import { collectProjects } from "./project";
+import { configStatus, defaultConfig, saveConfig } from "./config";
 import { ModuleFrame } from "./ModuleFrame";
 import { Settings } from "./Settings";
 import { Home } from "../home/Home";
@@ -13,8 +16,29 @@ import { setFullscreen, quit } from "./host";
 export function App() {
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [fullscreen, setFullscreenState] = createSignal(true);
+  const [saveError, setSaveError] = createSignal<string | null>(null);
 
   createEffect(syncPrefsToDom);
+
+  /**
+   * Persist on Settings close — the rule from architecture §14: changes apply
+   * live, the file is written when the modal closes.
+   *
+   * Blocks the config last read rather than `defaultConfig()` are carried
+   * forward, so settings this build does not manage yet — `[hotkeys]`,
+   * `[fleet]`, `[modules]` — survive a save instead of being reset to defaults
+   * by an app that simply does not know about them yet.
+   */
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    const base = configStatus()?.config ?? defaultConfig();
+    void saveConfig({
+      ...base,
+      edges: collectEdges(),
+      performance: collectPrefs(),
+      projects: collectProjects(),
+    }).then(setSaveError);
+  };
 
   const globals: Binding[] = [
     ...EDGES.map((edge) => ({
@@ -78,7 +102,7 @@ export function App() {
         id: "settings.close",
         keys: "escape",
         label: "Close settings",
-        run: () => setSettingsOpen(false),
+        run: closeSettings,
       },
       ...EDGES.map((edge) => ({
         id: `settings.block.${edge}`,
@@ -103,7 +127,7 @@ export function App() {
       </div>
 
       <Show when={settingsOpen()}>
-        <Settings onClose={() => setSettingsOpen(false)} />
+        <Settings onClose={closeSettings} saveError={saveError()} />
       </Show>
     </div>
   );

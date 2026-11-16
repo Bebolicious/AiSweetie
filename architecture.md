@@ -4,8 +4,10 @@ This document explains what the suite is, how it is built, and — more importan
 decision went the way it did. The code carries the what; the reasoning has until now lived only in
 doc comments and in conversations. This is the place it belongs.
 
-Companion document: [`ROADMAP.md`](ROADMAP.md) for what is not built yet and in what order it lands.
-The originating brief is [`build-prompt.md`](build-prompt.md), kept verbatim for historical record.
+Companion documents: [`ROADMAP.md`](ROADMAP.md) for what is not built yet and in what order it lands,
+and [`DEVLOG.md`](DEVLOG.md) for what changed when, what was decided along the way, and what is
+currently unverified. The originating brief is [`build-prompt.md`](build-prompt.md), kept verbatim
+for historical record.
 
 ---
 
@@ -42,7 +44,7 @@ its own geometry, and the reason edge colors follow the *direction* rather than 
 | Git | **`git` CLI**, parsed | Hunk-level staging is the deciding feature, and libgit2 handles partial-hunk staging badly. Generating a patch and feeding it to `git apply --cached` is what lazygit and gitui do too. |
 | Module system | **In-process ES modules** | Simplest thing that permits runtime swap. Accepted cost: a module shares the shell's process and can still exhaust it. A *render* error no longer takes the shell down — `shell/mountView.tsx` puts an error boundary inside each module's own root — but an infinite loop or a memory leak is still shared. Tolerable while the module set is ours; the contract is shaped so sandboxed iframes remain possible later. |
 | Animation | **CSS transform + bezier** | One composited layer, GPU-driven, no JS running during the swap. A hand-rolled spring integrator would put JavaScript on the critical path of the one interaction that must never stutter. |
-| AI | **Anthropic API direct from Rust** (planned) + **Claude Code as subprocess** (today) | Two paths for two jobs — see §13. |
+| AI | **Claude Code as subprocess** (today) + **Anthropic API direct from Rust** and **Managed Agents** for the fleet (both planned) | Three paths for three jobs — see §13. |
 | Config | **TOML via serde**, `directories` crate | Human-editable, diffable, and the file is part of the product: you are expected to read it. |
 | Platform | **Windows and Linux, both first-class**; macOS later | These are the two machines the app is used on daily. The expensive divergences are PTY (ConPTY vs forkpty — absorbed by `portable-pty`), autostart, and fullscreen-without-chrome. |
 
@@ -74,14 +76,14 @@ aisweete/
 │   ├── home/                    ← Home.tsx, Clock.tsx, Projects.tsx, PromptPill.tsx
 │   ├── shell/                   ← the world, services, and chrome (§4, §7, §8)
 │   │                              plus the primitives modules borrow:
-│   │                              mountView, disposers, debounce, lru
+│   │                              mountView, disposers, debounce, lru, config
 │   └── modules/<id>/            ← one directory per module (§10)
 │
 ├── src-tauri/
 │   ├── tauri.conf.json          ← window, bundle, security
 │   ├── capabilities/default.json
 │   └── src/                     ← lib.rs, pty.rs, git.rs, fsx.rs, agents.rs,
-│                                  probe.rs, task.rs (§9)
+│                                  probe.rs, task.rs, config.rs (§9, §14)
 │
 └── ui-mock/                     ← the Design Compiler prototype + five reference PNGs.
                                     NOT in the repository: `.gitignore` excludes it,
@@ -417,12 +419,17 @@ platform-neutral in `config.toml`. Two ordering rules in `handle`:
 
 **`bus.ts`** — typed emitter over `BusEvents`. Implemented, tested, unused (see §6).
 
-**`prefs.ts`** — the three performance signals plus `syncPrefsToDom()`. In-memory only today;
-persistence is ROADMAP 0.1.
+**`prefs.ts`** — the three performance signals plus `syncPrefsToDom()`, and the
+`hydratePrefs`/`collectPrefs` pair that maps them to `[performance]` in the config (§14).
 
 **`project.ts`** — `activeProject`, `recentProjects`, `openProject(path)` and `bootProject()`, which
 seeds from `fs_cwd` before the first render so the first terminal pane spawns inside the project.
-In-memory for the same reason as `prefs.ts`. Tested in `project.test.ts`.
+`hydrateProjects` restores the recents list and makes the newest entry active, and returns whether
+it restored anything — which is how `bootProject` knows not to override a remembered project with
+`fs_cwd`. Tested in `project.test.ts` and `hydrate.test.ts`.
+
+**`config.ts`** — loads `config.toml` through the host at boot, holds the last `Loaded` result for
+Settings to display, and writes it back. The frontend mirror of `src-tauri/src/config.rs`.
 
 **`host.ts`** — a thin wrapper over the Tauri window API and the shell's own host calls (`cwd`,
 `home`, `listDirs`), guarded by `"__TAURI_INTERNALS__" in window`. This is quietly one of the
@@ -721,10 +728,17 @@ what the doctor layer's "pick a folder" remediations (§11) will reuse.
 
 ### Persistence
 
-Deliberately none yet. The active project and the recents list reset on restart, exactly as edge
-assignment and the performance toggles do today. They hydrate from `[[projects]]` (§14) when ROADMAP
-0.1 lands. Adding localStorage in the meantime would be the second persistence mechanism the roadmap
-warns against.
+The recents list is `[[projects]]` in `config.toml` (§14), newest first, and the newest entry becomes
+the active project at boot. Restoring it is what makes `bootProject` conditional: `fs_cwd` answers
+"where the binary started", which is the wrong answer once a project can be remembered — reopening
+the app should land you where you left off, not wherever the launcher lives.
+
+A stored entry whose `name` is blank has it re-derived from the path, so a renamed directory stops
+showing its old name. Entries with no path are dropped rather than becoming a project that points
+nowhere.
+
+Still open from 0.4: per-project terminal session restore — switch back and your panes are as you
+left them.
 
 ### Self-dev mode
 
@@ -748,7 +762,8 @@ inside the app.
 
 ## 13. The AI layer
 
-Two paths, for two different jobs. Keeping both is a decision, not indecision.
+Three paths, for three different jobs. Keeping them separate is a decision, not indecision — each
+exists because the other two are the wrong shape for its job.
 
 **Claude Code as a subprocess** — *implemented.* The agents module. Long-running, multi-turn,
 tool-using work where you want the full agent harness: file edits, test runs, its own context
@@ -765,16 +780,55 @@ cost meter**. The meter is the reason this layer is Rust-side: every AI call in 
 through one place that counts tokens, or the number on the home screen is a guess. A per-module JS
 client would make that impossible to enforce.
 
-When building against this, consult the `claude-api` skill for current model ids and pricing rather
-than hardcoding from memory.
+**Managed Agents, coordinator mode** — *design only; after Phase 0.* The agents module becomes a
+**fleet**: one coordinator agent that delegates to a roster of worker agents and supervises them,
+rather than today's flat queue of independent CLI subprocesses.
+
+Why this surface rather than more `claude` subprocesses: a fleet needs the agents to talk to each
+other and to be watchable, and Managed Agents provides both as a server-side primitive —
+`multiagent: {type: "coordinator", agents: [...]}` on the agent object, each worker running in its own
+**thread** with its own conversation history, plus an event stream that is almost exactly what a fleet
+visualisation needs (`session.thread_created`, `session.thread_status_running|idle`,
+`agent.thread_message_sent` / `_received`, and a per-thread stream for drilling into one worker).
+Hand-rolling that over N subprocesses means inventing a coordination protocol, a message bus between
+processes, and a supervision model — all of which this already has. Limits worth designing against:
+20 unique agents in a roster, 25 concurrent threads, and **one level of delegation** (a worker's own
+roster does not cascade).
+
+The critical configuration choice is **`config: {type: "self_hosted"}`** on the environment. By
+default Managed Agents runs tool execution in an Anthropic-hosted container, which is wrong here —
+the whole point is agents working on *your* checkout. Self-hosted keeps the orchestration loop on
+Anthropic's side while `bash`, `read`, `write` and friends execute on this machine, through an
+outbound-polling worker the suite runs. Connectivity is outbound-only; nothing dials in. The costs
+of that choice are real and documented: memory stores and vault `environment_variable` credentials
+are not supported for self-hosted sandboxes, and container hardening becomes ours.
+
+Two consequences for the layers below. It needs an **API key** — unlike the subprocess path, the CLI
+does not own authentication here — plus an `ANTHROPIC_ENVIRONMENT_KEY` scoped to the environment's
+work queue. And agents are **persistent, versioned objects**: created once and referenced by id, never
+re-created per run, which means the ids belong in `config.toml` (§14) and the keys do not.
+
+Deliberately after Phase 0, and not only because of the gate: a fleet whose roster and transcripts
+reset on restart is a demo. 0.1 has landed and reserved `[fleet]` for the ids; what is still missing
+is 0.7, for the handoffs that make a coordinator's output land somewhere, and transcript persistence
+— which is session state rather than settings, so it wants its own store rather than `config.toml`.
+
+When building against any of these, consult the `claude-api` skill for current model ids, pricing,
+and the Managed Agents object model rather than hardcoding from memory — this is a beta surface and
+the shapes move.
 
 ---
 
 ## 14. Config and state
 
-*Partially implemented — the shape is settled, persistence is ROADMAP 0.1.*
+*Implemented — ROADMAP 0.1. `src-tauri/src/config.rs` owns the file; `src/shell/config.ts` is its
+frontend mirror.*
 
-Every setting currently lives in an in-memory Solid signal and resets on restart. The target:
+Each piece of shell state owns its own mapping to the file — `hydrateEdges`/`collectEdges`,
+`hydratePrefs`/`collectPrefs`, `hydrateProjects`/`collectProjects` — so the schema translation lives
+beside the state it translates rather than in one central function that has to know about everything.
+
+The file:
 
 ```toml
 # ~/.config/suite/config.toml
@@ -802,17 +856,65 @@ self_dev = true
 provider = "anthropic"
 # api_key is read from ANTHROPIC_API_KEY or the OS keychain — never written here
 
+[fleet]                     # the Managed Agents fleet (§13). Ids, never secrets.
+coordinator_agent = ""      # agent_… — created once, referenced forever
+environment = ""            # env_… — the self-hosted sandbox
+workers = []                # agent_… roster, max 20
+# ANTHROPIC_API_KEY and ANTHROPIC_ENVIRONMENT_KEY are read from the
+# environment or the OS keychain — never written here
+
 [modules]
 paths = []                  # extra module bundle directories
 ```
 
-Paths via the `directories` crate, with `$XDG_CONFIG_HOME/suite/config.toml` honored on Linux per the
-original brief. On Windows this resolves under `%APPDATA%\com.aisweete.suite\`.
+The `[fleet]` block is reserved ahead of the feature on purpose. Those ids are the one piece of the
+fleet that *must* persist — a Managed Agent is created once and referenced by id, so losing the id
+means orphaning the agent and paying to create another. Writing the block into the 0.1 schema now
+costs nothing; adding it later is the schema migration this roadmap keeps warning about.
+
+Paths via the `directories` crate, with an empty qualifier and organization — measured, not assumed:
+
+| Platform | Path |
+|---|---|
+| Linux | `$XDG_CONFIG_HOME/suite/config.toml` (`~/.config/suite/config.toml`), honored per the original brief |
+| Windows | `%APPDATA%\suite\config\config.toml` |
+| macOS | `~/Library/Application Support/suite/config.toml` |
+
+The conventional `ProjectDirs::from("com", "aisweete", "suite")` would put Windows at
+`%APPDATA%\aisweete\suite\config\config.toml` — four levels deep, with "config" in it twice, for a
+file a human is meant to open. `SUITE_CONFIG` overrides the path outright, which is both the test
+seam and a way to run two configurations side by side.
 
 **The rule: changes apply live, the file is written on Settings close.** Config is part of the
-product — you are expected to open it, read it, and hand-edit it. An unreadable config is a bug.
+product — you are expected to open it, read it, and hand-edit it.
 
-Secrets never land in the TOML.
+That premise is what shapes the error handling, and the naive reading of the rule above is
+destructive. Three decisions follow from taking hand-editing seriously:
+
+**A malformed config is never overwritten.** A typo fails the parse, the app falls back to defaults,
+and then — applied naively — closing Settings would replace your hand-edited file with those
+defaults. Instead a failed parse sets `read_only`: `save` refuses, and Settings says why. The config
+you broke is the config you can still fix in an editor.
+
+**Unknown keys are errors, not silence.** `deny_unknown_fields`, so `panel_blurr = false` is a
+reported problem rather than a setting that mysteriously does nothing. Combined with the rule above,
+you keep your file *and* get told what is wrong with it.
+
+**Blocks this build does not manage are carried forward.** A save rewrites `[edges]`,
+`[performance]` and `[[projects]]` and copies the rest from what was read — otherwise a build that
+has not implemented hotkey rebinding yet (0.9) would wipe `[hotkeys]` every time you opened
+Settings.
+
+Every field has a default and every block is optional, so a file containing nothing but
+`[performance]` loads. Writes go to a temp file and are renamed, so an interrupted save cannot leave
+a truncated config for the next boot to read.
+
+The frontend validates what it adopts rather than trusting it. A `[edges]` block naming an unknown
+module id keeps the default and warns; a module named on two edges loses the second, because the
+frame is keyed to the module and the duplicate would leave an edge unreachable.
+
+Secrets never land in the TOML. `[fleet]` holds ids; the API key and
+`ANTHROPIC_ENVIRONMENT_KEY` come from the environment or the OS keychain.
 
 ---
 
@@ -862,6 +964,7 @@ cargo test        # in src-tauri/
 | `shell/lru.test.ts` | Eviction order, promotion on read, and that capacity 0 is not a cache that stores nothing |
 | `shell/mountView.test.tsx` | A module that throws loses its own cell and nothing else — including a throw that arrives later, with a signal change |
 | `shell/useStatus.test.ts` | No write when the summary reads the same; no polling at all while the world is in flight |
+| `shell/hydrate.test.ts` | A loaded config reaches the signals the shell renders from, and a hand-written file that is *wrong* degrades rather than breaking the app |
 
 **Modules, driven through a mocked host.** These mount a real module and assert on what it asks the
 host for, which is how the expensive mistakes get caught — the cost is almost always a process spawn
@@ -887,8 +990,9 @@ or a synchronous highlight, and counting calls is more honest than inspecting st
 | `git.rs::tests` | The refs cache in isolation — hit, miss, `fresh` bypass, errors uncached, bounded |
 | `pty.rs::tests` | The output batcher: every byte once, in order, tail flushed on EOF, and the loop ends when the webview goes |
 | `probe.rs::tests` | Binary resolution order, and that an explicit override fails rather than falling back |
+| `config.rs::tests` | A partial file keeps defaults for what it omits; a malformed one is reported and never overwritten; a full round trip |
 
-Plus four `#[ignore]`-d measurements, listed in §17. They print distributions and timings rather
+Plus four `#[ignore]`-d measurements and one path diagnostic, listed in §17. They print distributions and timings rather
 than asserting; `cargo test -- --ignored --nocapture`.
 
 The remaining highest-value gap is the PTY **session** layer: spawn, write-echo, resize and reaping
@@ -906,11 +1010,11 @@ does not leave you expecting features that do not exist.
 
 | Gap | Where | Roadmap |
 |---|---|---|
-| No config persistence — all settings reset on restart | `prefs.ts`, `edges.ts` | 0.1 |
+| Terminal sessions and agent transcripts still reset on restart — `config.toml` covers settings and projects, not live session state | `terminal/`, `agents/` | 0.4 |
 | No doctor layer; missing dependencies surface as console errors | — | 0.2 |
 | `registry.reload()` absent → the HMR gap in §7 | `registry.ts` | 0.3 |
 | `loadFromPath` unimplemented (needs a Rust custom protocol) | `registry.ts` | 0.3 |
-| Active project and recents reset on restart; no per-project terminal sessions | `project.ts` | 0.1, 0.4 |
+| No per-project terminal sessions — switching back does not restore your panes | `project.ts` | 0.4 |
 | No AI provider layer → no AI commit message, no NL prompts, no cost meter | — | 0.6 |
 | Bus implemented but unused; no cross-module handoffs | `bus.ts` | 0.7 |
 | Home missing todo, calculator, system stats, scratchpad, hotkey chips | `src/home/` | 0.8 |
@@ -921,8 +1025,9 @@ does not leave you expecting features that do not exist.
 
 ### Measured, so these stop being guesses
 
-Four `#[ignore]`-d measurements live beside the code they measure. They are not checks — they print
-distributions and timings. `cargo test -- --ignored --nocapture`.
+Four `#[ignore]`-d measurements live beside the code they measure, plus a diagnostic that prints the
+resolved config path. They are not checks — they print distributions and timings.
+`cargo test -- --ignored --nocapture`.
 
 | What | Where | Result |
 |---|---|---|

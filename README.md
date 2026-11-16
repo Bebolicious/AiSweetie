@@ -35,6 +35,7 @@ handed a container it does not own, at a size it does not choose, in a hue it is
 
 - [`architecture.md`](architecture.md) — what it is, how it's built, and why each decision went the way it did
 - [`ROADMAP.md`](ROADMAP.md) — what isn't built yet, and in what order it lands
+- [`DEVLOG.md`](DEVLOG.md) — what changed when, and what is currently unverified
 
 ---
 
@@ -54,12 +55,13 @@ Pre-v1. Phase 0 of the roadmap is the v1 release; it is not complete.
 | Projects | Switch project and all four modules re-scope without a restart; live PTYs survive it |
 | Edge assignment | Reassign any module to any edge from Settings; the frame moves rather than remounting |
 | Failure containment | A module that throws loses its own cell and says so. The other three edges, the rails and `esc` keep working — which matters when the thing still running is your shells |
+| Persistence | Edge assignment, performance toggles and your project list survive a restart, in a `config.toml` you are meant to hand-edit. A broken config is reported, never overwritten |
 
 **Not yet — the honest list:**
 
 | | Roadmap |
 |---|---|
-| **Nothing persists across a restart** — edges, performance toggles, active project, recents, terminal sessions, agent transcripts | 0.1, 0.4 |
+| Terminal sessions and agent transcripts reset on restart. Settings, edge assignment and your project list persist; live session state does not | 0.4 |
 | No doctor layer. Agents explains a missing or broken `claude` CLI, and git explains a directory that isn't a repository — but there is no `preflight()`, no platform-specific install guidance, and no health indicator on the home screen | 0.2 |
 | Editing a module's source needs a restart — `registry.reload()` does not exist yet | 0.3 |
 | Self-dev mode (agent write-tools, file-watch reload, dev preset) | 0.5 |
@@ -104,6 +106,11 @@ cd src-tauri && cargo test
 `npm run dev` runs the entire frontend in a plain browser. Every OS call degrades to a no-op, so
 layout and design work never waits on a Rust rebuild; the modules render their "needs the Tauri
 host" state instead. This is the fast loop.
+
+**Your config** lives at `%APPDATA%\suite\config\config.toml` on Windows,
+`~/.config/suite/config.toml` on Linux, and `~/Library/Application Support/suite/config.toml` on
+macOS. It is meant to be hand-edited; Settings shows the path and tells you if the file is broken.
+`SUITE_CONFIG` overrides it, which is how you run two configurations side by side.
 
 `SUITE_PROJECT` points the app at a directory other than the one it was launched from.
 `SUITE_CLAUDE_PATH` overrides `claude` resolution when it is installed somewhere unusual — a version

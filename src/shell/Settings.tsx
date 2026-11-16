@@ -1,6 +1,7 @@
-import { For } from "solid-js";
+import { For, Show } from "solid-js";
 import { EDGES, type Edge } from "@suite/module";
 import { assign, assignment, EDGE_HUE, edgeOf } from "./edges";
+import { configStatus } from "./config";
 import { modules } from "./registry";
 import { router } from "./context";
 import { MOD_LABEL } from "./keymap";
@@ -56,7 +57,7 @@ function prettyKeys(keys: string): string {
     .join(" ");
 }
 
-export function Settings(props: { onClose: () => void }) {
+export function Settings(props: { onClose: () => void; saveError?: string | null }) {
   // Every binding in the app, gathered from the router rather than a
   // hand-maintained list — so this can't drift out of date.
   const bindings = () => router.all().filter((b) => b.label);
@@ -77,6 +78,40 @@ export function Settings(props: { onClose: () => void }) {
             close <span class="chip__key">esc</span>
           </button>
         </header>
+
+        {/* Where the file is, because §14's premise is that you open it. The
+            read-only case is not decoration: the app is running on defaults
+            and will refuse to save, so saying nothing would look like the
+            settings below simply do not persist. */}
+        <Show when={configStatus()} keyed>
+          {(status) => (
+            <Show
+              when={status.error}
+              fallback={
+                <p class="config-line">
+                  {status.path
+                    ? `config · ${status.path}${status.missing ? " (not written yet)" : ""}`
+                    : "config · not persisted in the browser build"}
+                </p>
+              }
+            >
+              {(error) => (
+                <p class="config-line config-line--bad">
+                  ⚠ {error()}
+                  <Show when={status.read_only}>
+                    {" "}
+                    — running on defaults, and changes will not be saved until
+                    the file is fixed or removed.
+                  </Show>
+                </p>
+              )}
+            </Show>
+          )}
+        </Show>
+
+        <Show when={props.saveError}>
+          {(error) => <p class="config-line config-line--bad">⚠ {error()}</p>}
+        </Show>
 
         <div class="modal__body">
           <div class="modal__col">

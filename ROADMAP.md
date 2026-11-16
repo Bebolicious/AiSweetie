@@ -4,6 +4,8 @@ How this app gets from "four working modules" to "the only program I open all da
 
 Read [`architecture.md`](architecture.md) first — it explains the system this roadmap extends, and
 §11, §12 and §13 there carry the full designs for the three largest Phase 0 items.
+[`DEVLOG.md`](DEVLOG.md) records what has actually been done, session by session, and what is not
+yet verified.
 
 ## The gate
 
@@ -22,16 +24,31 @@ Phase 0 is the v1 release. When it ships, the app is handed to testers.
 
 Ordered by dependency, not by size. 0.1 and 0.2 unblock most of what follows.
 
-### 0.1 — Config persistence
+### 0.1 — Config persistence ✔
 
-Read `config.toml` at boot, write it on Settings close. `edges.ts` and `prefs.ts` hydrate from it
-instead of hardcoded defaults. Schema and path rules in architecture §14.
+Read `config.toml` at boot, write it on Settings close. `edges.ts`, `prefs.ts` and `project.ts`
+hydrate from it instead of hardcoded defaults. Schema and path rules in architecture §14.
 
 First because every item below wants to persist something, and a second persistence mechanism added
 later is a migration.
 
+**Done.** `src-tauri/src/config.rs` owns the file; each shell module owns its own
+`hydrate*`/`collect*` pair so the schema mapping lives beside the state it maps. Two decisions worth
+knowing:
+
+- **A malformed config is never overwritten.** Applied naively, "write on Settings close" destroys
+  work: a typo fails the parse, the app falls back to defaults, you close Settings, and your
+  hand-edited file is gone. A failed parse instead sets `read_only`, `save` refuses, and Settings
+  shows why.
+- **`deny_unknown_fields`**, so a misspelled key is a reported error rather than a setting that
+  silently does nothing.
+
+Also carried: blocks this build does not manage yet — `[hotkeys]`, `[fleet]`, `[modules]` — survive a
+save instead of being reset by an app that does not know about them.
+
 **Done when:** edge assignment and the three performance toggles survive a restart, and hand-editing
-the TOML is reflected on next launch.
+the TOML is reflected on next launch. ✔ — plus the active project and recents (0.4's remaining
+item), and `bootProject` no longer overrides a remembered project with `fs_cwd`.
 
 ### 0.2 — The doctor layer
 
@@ -79,9 +96,13 @@ rather than the OS folder dialog, which is a foreign mouse-first window over a f
 explorer and agents re-scope on switch; terminal panes spawned after a switch start in the new
 project while running panes keep theirs.
 
-Deliberately **not** persisted: the active project and recents reset on restart, exactly like edges
-and prefs do today. They hydrate from `[[projects]]` in config.toml when 0.1 lands, which is why no
-localStorage or second mechanism was added. Still open: per-project terminal session restore.
+Persisted as of 0.1: the recents list is `[[projects]]` in `config.toml`, newest first, and the
+newest becomes active at boot — which is also why `bootProject` is now conditional, since `fs_cwd`
+answers "where the binary started" and that is the wrong answer once a project can be remembered.
+
+Still open: **per-project terminal session restore**, the last piece of 0.4. Switch away and back,
+and your panes should be as you left them. Note this is session state rather than settings, so it
+does not belong in `config.toml` — it wants its own store, and deciding where is part of the work.
 
 **Done when:** switching project re-scopes git, explorer, terminal and agents without a restart, live
 PTYs survive the switch, and two repos can be worked in one session. ✔ — plus, after 0.1, the
@@ -164,6 +185,19 @@ that 0.8 has not built yet — the mock's PNGs stay out of the repo for the same
 the real app, not `ui-mock/`.
 
 **Done when:** tagged `v1.0.0` with installers attached to the GitHub release.
+
+---
+
+### The agents fleet
+
+Not numbered, because it is a rework rather than a gap: the agents module becomes a **coordinator and
+a roster of workers** on Managed Agents with a self-hosted sandbox, replacing today's flat queue of
+independent `claude` subprocesses. Full design and the reasoning for that surface in architecture §13.
+
+It sits here rather than in Phase 0 for a reason beyond the gate: it depends on 0.1 for the agent ids
+and transcripts, and on 0.7 for a coordinator's output to land anywhere. Built before those, it is a
+demo that forgets its own fleet every restart. The `[fleet]` block in the §14 schema is reserved by
+0.1 so this does not become a migration.
 
 ---
 
